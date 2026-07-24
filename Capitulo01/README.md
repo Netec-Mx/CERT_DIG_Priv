@@ -1,10 +1,104 @@
 # Analizar un certificado HTTPS real e identificar emisor, vigencia, algoritmos y cadena de confianza
 
+## Ruta guiada esencial — 25 minutos
+
+### Escenario, objetivo y relación con la agenda
+
+Recibes un certificado HTTPS y debes decidir si su identidad, vigencia y cadena son coherentes. El objetivo operativo es inspeccionar **un** certificado y registrar emisor, SAN, vigencia, algoritmo de firma, clave pública y cadena. Cubre la práctica aprobada del Capítulo 1 y los puntos 1.1 a 1.5.
+
+### Prerrequisitos y archivos
+
+- OpenSSL 1.1.1 o 3.x, navegador y acceso HTTPS autorizado.
+- Conocimientos básicos de hash, cifrado asimétrico, CA, CSR y X.509.
+- Se crearán `evidence/server-leaf.pem` y `evidence/certificate-analysis.md` bajo `<LAB_ROOT>`.
+- Si no hay Internet, el instructor debe entregar un certificado público de muestra mediante `<CERTIFICATE_PATH>`.
+
+#### Mapa visual: hash, cifrado y firma
+
+```mermaid
+flowchart LR
+    D[Datos] --> H[Hash: integridad]
+    D --> C[Cifrado: confidencialidad]
+    D --> F[Firma: autenticidad e integridad]
+```
+
+#### Mapa visual: cadena de confianza
+
+```mermaid
+flowchart LR
+    L[Certificado final] -->|firmado por| I[CA intermedia]
+    I -->|firmada por| R[CA raíz]
+    R -->|ancla local| T[Trust store del cliente]
+```
+
+El servidor presenta normalmente el certificado final y las intermedias necesarias; la raíz permanece como ancla local del cliente.
+
+### Procedimiento esencial
+
+1. Prepara el entorno y selecciona un único hostname autorizado:
+
+   ```bash
+   export LAB_ROOT="${LAB_ROOT:-$HOME/cert-digital-lab}"
+   export SERVICE_HOSTNAME="<SERVICE_HOSTNAME>"
+   mkdir -p "$LAB_ROOT/evidence"
+   cd "$LAB_ROOT/evidence"
+   ```
+
+2. Inspecciona el certificado en el navegador. Localiza Subject, Issuer, SAN, vigencia y cadena. El SAN, no solo el CN, debe contener el hostname usado.
+
+3. Obtén el certificado final. La llave privada del servidor nunca se descarga:
+
+   ```bash
+   openssl s_client -connect "${SERVICE_HOSTNAME}:443" -servername "$SERVICE_HOSTNAME" </dev/null 2>/dev/null \
+     | openssl x509 -out server-leaf.pem
+   ```
+
+4. Inspecciona los campos principales:
+
+   ```bash
+   openssl x509 -in server-leaf.pem -noout -subject -issuer -dates -serial -fingerprint -sha256
+   openssl x509 -in server-leaf.pem -noout -ext subjectAltName
+   openssl x509 -in server-leaf.pem -noout -text | grep -E "Signature Algorithm|Public Key Algorithm|Basic Constraints"
+   ```
+
+5. Registra la evidencia en `certificate-analysis.md`: hostname, Subject, Issuer, SAN, notBefore/notAfter, firma, clave pública, rol leaf/intermedia/raíz y una observación sobre revocación.
+
+6. Valida vigencia y hostname de forma observable:
+
+   ```bash
+   openssl x509 -in server-leaf.pem -noout -checkend 0
+   openssl x509 -in server-leaf.pem -noout -checkhost "$SERVICE_HOSTNAME"
+   ```
+
+### Resultado esperado y validación final
+
+- `server-leaf.pem` comienza con `-----BEGIN CERTIFICATE-----` y no contiene una llave privada.
+- `-checkend 0` y `-checkhost` terminan con código 0.
+- El estudiante explica que una coincidencia textual Issuer/Subject no sustituye la validación criptográfica de cadena.
+- Evidencia observable: `certificate-analysis.md` completo y salida exitosa de las dos validaciones.
+
+### Seguridad, troubleshooting y limpieza
+
+- No uses dominios del cliente ni omitas la validación TLS.
+- Si la conexión está bloqueada, utiliza `<CERTIFICATE_PATH>` y copia solo el certificado público.
+- Si `-checkhost` no existe en la versión instalada, revisa SAN con `-ext subjectAltName` y documenta la limitación.
+- Conserva el análisis; elimina únicamente certificados temporales que no se usarán después. No ejecutes borrados recursivos sobre `<LAB_ROOT>`.
+
+### Reflexión
+
+1. ¿Por qué el SAN prevalece sobre el CN para validar el hostname?
+2. ¿Qué firma el emisor y con qué clave se verifica?
+3. ¿Por qué el servidor normalmente no necesita enviar la CA raíz?
+
+### Actividades opcionales — fuera de los 25 minutos
+
+Comparar otros certificados, separar la cadena presentada, consultar OCSP/CRL y ejecutar el procedimiento ampliado incluido al final de este documento. Estas actividades no son requisito para completar la práctica principal.
+
 ## 1. Metadatos
 
 | Campo            | Detalle                                      |
 |------------------|----------------------------------------------|
-| **Duración**     | 25 minutos                                   |
+| **Duración**     | 45 minutos (ruta esencial)                   |
 | **Complejidad**  | Fácil                                        |
 | **Nivel Bloom**  | Aplicar (Apply)                              |
 | **Modalidad**    | Individual / Guiada                          |
@@ -48,7 +142,7 @@ Al completar este laboratorio serás capaz de:
 | OpenSSL                                 | 1.1.1 (recomendado 3.x) | `openssl version`                  |
 | curl                                    | 7.x                  | `curl --version`                      |
 | Mozilla Firefox o Google Chrome         | Firefox 115+ / Chrome 114+ | Abrir el navegador               |
-| Conectividad a Internet (sitios HTTPS)  | Requerida            | `curl -I https://www.google.com`      |
+| Conectividad a Internet (sitios HTTPS)  | Requerida            | `curl -I https://www.example.com`     |
 
 > **Nota:** Si el entorno de laboratorio no tiene acceso a Internet, el instructor debe proveer los archivos `.pem` de referencia y los outputs de `openssl s_client` para los tres sitios.
 
@@ -62,40 +156,43 @@ Ejecuta los siguientes comandos en tu terminal antes de iniciar:
 
 ```bash
 # Crear directorio de trabajo persistente para todo el curso
-mkdir -p ~/labs/certs/practica1
-cd ~/labs/certs/practica1
+export LAB_ROOT="$HOME/cert-digital-lab"
+mkdir -p "$LAB_ROOT"/{certs,private,csr,exports,signed,scripts,config,evidence}
+cd "$LAB_ROOT/evidence"
 
 # Verificar versión de OpenSSL
 openssl version -a
 
 # Verificar conectividad a los tres sitios objetivo
-curl -s -o /dev/null -w "%{http_code}" https://www.google.com
-curl -s -o /dev/null -w "%{http_code}" https://www.gob.mx
-curl -s -o /dev/null -w "%{http_code}" https://www.bancomer.com.mx
+curl -s -o /dev/null -w "%{http_code}" https://www.example.com
+curl -s -o /dev/null -w "%{http_code}" https://www.example.org
+curl -s -o /dev/null -w "%{http_code}" https://www.example.net
 ```
 
 > **Sitios objetivo sugeridos** (puedes sustituirlos por sitios equivalentes accesibles desde tu entorno):
 >
 > | # | Sitio                      | Categoría           |
 > |---|----------------------------|---------------------|
-> | 1 | `www.google.com`           | Tecnología          |
-> | 2 | `www.gob.mx`               | Gobierno            |
-> | 3 | `www.bbva.mx`              | Banca / Finanzas    |
+> | 1 | `www.example.com`          | Dominio reservado   |
+> | 2 | `www.example.org`          | Dominio reservado   |
+> | 3 | `www.example.net`          | Dominio reservado   |
 >
-> Si algún sitio no es accesible, sustitúyelo por: `github.com`, `www.sat.gob.mx`, o `www.hsbc.com.mx`.
+> Si algún sitio no es accesible, utiliza los certificados PEM de referencia proporcionados por el instructor; no sustituyas el objetivo por dominios productivos.
 
 ### Variables de entorno de conveniencia
 
 ```bash
 # Definir los tres sitios como variables para reutilizar en los comandos
-export SITE1="www.google.com"
-export SITE2="www.gob.mx"
-export SITE3="www.bbva.mx"
+export SITE1="www.example.com"
+export SITE2="www.example.org"
+export SITE3="www.example.net"
 ```
 
 ---
 
-## 6. Procedimiento Paso a Paso
+## Anexo opcional: procedimiento ampliado
+
+> **Referencia no ejecutable sin revisión del instructor:** este anexo conserva variantes generadas originalmente para análisis. Puede depender de Internet, GNU `grep/awk/csplit` y salidas temporales. No uses `-noverify`, no desactives TLS y no ejecutes sus variantes fuera de un entorno aislado.
 
 ---
 
@@ -105,7 +202,7 @@ export SITE3="www.bbva.mx"
 
 #### Instrucciones
 
-1. Abre Firefox o Chrome y navega a `https://www.google.com`.
+1. Abre Firefox o Chrome y navega a `https://www.example.com`.
 
 2. Haz clic en el **candado** (🔒) en la barra de direcciones.
    - En Firefox: *Conexión segura* → *Más información* → pestaña **Seguridad** → botón **Ver certificado**.
@@ -128,19 +225,19 @@ export SITE3="www.bbva.mx"
    - El **certificado intermedio**: emitido por la CA raíz para la CA intermedia.
    - El **certificado raíz**: autofirmado (Issuer = Subject).
 
-5. Repite los pasos 1–4 para `https://www.gob.mx` y `https://www.bbva.mx` (o tus sitios alternativos).
+5. Repite los pasos 1–4 para `https://www.example.org` y `https://www.example.net`.
 
 #### Salida esperada
 
-Al explorar la cadena de `www.google.com` deberías ver algo similar a:
+Al explorar la cadena de `www.example.com` deberías ver una estructura similar a esta (los nombres exactos de CA pueden cambiar):
 
 ```
-Leaf:    CN=www.google.com
-         Issuer: CN=GTS CA 1C3, O=Google Trust Services LLC
-Interm:  CN=GTS CA 1C3, O=Google Trust Services LLC
-         Issuer: CN=GTS Root R1, O=Google Trust Services LLC
-Root:    CN=GTS Root R1, O=Google Trust Services LLC
-         Issuer: CN=GTS Root R1  ← autofirmado
+Leaf:    CN=www.example.com
+         Issuer: CN=<INTERMEDIATE_CA>
+Interm:  CN=<INTERMEDIATE_CA>
+         Issuer: CN=<TRUSTED_ROOT_CA>
+Root:    CN=<TRUSTED_ROOT_CA>
+         Issuer: CN=<TRUSTED_ROOT_CA>  ← autofirmado
 ```
 
 > **Conexión con la lección 1.1:** La CA usa su **clave privada** para firmar el certificado del nivel inferior (firma sobre el hash del contenido X.509). Los clientes validan esa firma con la **clave pública** de la CA, que está anclada en el almacén de confianza del sistema operativo.
@@ -162,7 +259,7 @@ Root:    CN=GTS Root R1, O=Google Trust Services LLC
 1. Descarga el **certificado de entidad final** (leaf) de cada sitio y guárdalo como archivo `.pem`:
 
 ```bash
-cd ~/labs/certs/practica1
+cd "$LAB_ROOT/evidence"
 
 # Sitio 1: Google (tecnología)
 echo | openssl s_client -connect ${SITE1}:443 -servername ${SITE1} 2>/dev/null \
@@ -191,7 +288,7 @@ echo "✔ site1_fullchain.pem guardado (cadena completa)"
 3. Verifica que los archivos se crearon correctamente:
 
 ```bash
-ls -lh ~/labs/certs/practica1/
+ls -lh "$LAB_ROOT/evidence/"
 # Verifica que los .pem tienen tamaño > 0
 wc -l site1_leaf.pem site2_leaf.pem site3_leaf.pem
 ```
@@ -301,17 +398,17 @@ done
 cat reporte_certs.txt
 ```
 
-#### Salida esperada (ejemplo para `site1_leaf.pem` — Google)
+#### Salida esperada (ejemplo ilustrativo para `site1_leaf.pem`)
 
 ```
 ==========================================
 CERTIFICADO: site1_leaf.pem
 ==========================================
 --- Subject (CN) ---
-subject=CN=www.google.com
+subject=CN=www.example.com
 
 --- Issuer ---
-issuer=C=US, O=Google Trust Services LLC, CN=GTS CA 1C3
+issuer=C=<COUNTRY>, O=<CA_ORGANIZATION>, CN=<INTERMEDIATE_CA>
 
 --- Vigencia ---
 notBefore=Nov  6 08:22:45 2024 GMT
@@ -333,7 +430,7 @@ SHA256 Fingerprint=AA:BB:CC:...
 
 --- SANs ---
 X509v3 Subject Alternative Name:
-    DNS:www.google.com
+    DNS:www.example.com
 
 --- Key Usage ---
 X509v3 Key Usage: critical
@@ -454,12 +551,12 @@ openssl x509 -in chain_intermediate.pem -noout -text | grep -A2 "Basic Constrain
 
 ```
 === LEAF ===
-  Subject: subject=CN=www.google.com
-  Issuer:  issuer=C=US, O=Google Trust Services LLC, CN=GTS CA 1C3
+  Subject: subject=CN=www.example.com
+  Issuer:  issuer=C=<COUNTRY>, O=<CA_ORGANIZATION>, CN=<INTERMEDIATE_CA>
 
 === INTERMEDIO ===
-  Subject: subject=C=US, O=Google Trust Services LLC, CN=GTS CA 1C3
-  Issuer:  issuer=C=US, O=Google Trust Services LLC, CN=GTS Root R1
+  Subject: subject=C=<COUNTRY>, O=<CA_ORGANIZATION>, CN=<INTERMEDIATE_CA>
+  Issuer:  issuer=C=<COUNTRY>, O=<CA_ORGANIZATION>, CN=<TRUSTED_ROOT_CA>
   Basic Constraints:
                 CA:TRUE, pathlen:0
 
@@ -653,7 +750,8 @@ echo "  VALIDACIÓN LAB 01-00-01"
 echo "============================================"
 PASS=0
 FAIL=0
-cd ~/labs/certs/practica1 2>/dev/null || { echo "✗ Directorio de trabajo no encontrado"; exit 1; }
+LAB_ROOT="${LAB_ROOT:-$HOME/cert-digital-lab}"
+cd "$LAB_ROOT/evidence" 2>/dev/null || { echo "✗ Directorio de trabajo no encontrado"; exit 1; }
 
 # Test 1: Archivos PEM de los tres sitios existen
 for f in site1_leaf.pem site2_leaf.pem site3_leaf.pem; do
@@ -737,8 +835,8 @@ echo "============================================"
 Guarda este script y ejecútalo:
 
 ```bash
-chmod +x ~/labs/certs/practica1/validar_lab.sh 2>/dev/null || true
-bash ~/labs/certs/practica1/validar_lab.sh
+chmod +x "$LAB_ROOT/evidence/validar_lab.sh" 2>/dev/null || true
+bash "$LAB_ROOT/evidence/validar_lab.sh"
 ```
 
 **Criterio de aprobación:** Mínimo 10 de 12 pruebas en PASS.
@@ -751,7 +849,7 @@ bash ~/labs/certs/practica1/validar_lab.sh
 
 **Síntoma:**
 ```bash
-echo | openssl s_client -connect www.bbva.mx:443 -servername www.bbva.mx 2>/dev/null \
+echo | openssl s_client -connect www.example.net:443 -servername www.example.net 2>/dev/null \
   | openssl x509 -out site3_leaf.pem
 # El archivo site3_leaf.pem queda vacío (0 bytes) o aparece el error:
 # "unable to load certificate"
@@ -764,18 +862,18 @@ El sitio puede estar bloqueado por el firewall del laboratorio, tener una config
 
 ```bash
 # Opción 1: Agregar timeout explícito y verificar la conexión primero
-timeout 10 openssl s_client -connect www.bbva.mx:443 \
-  -servername www.bbva.mx \
+timeout 10 openssl s_client -connect www.example.net:443 \
+  -servername www.example.net \
   -tls1_2 \
   </dev/null 2>&1 | head -30
 
 # Opción 2: Usar un sitio alternativo conocido y accesible
-export SITE3="www.hsbc.com"
+export SITE3="www.example.org"
 echo | openssl s_client -connect ${SITE3}:443 -servername ${SITE3} 2>/dev/null \
   | openssl x509 -out site3_leaf.pem
 
 # Opción 3: Usar curl para verificar conectividad primero
-curl -v --max-time 10 https://www.bbva.mx 2>&1 | grep -E "(SSL|TLS|certificate|Connected)"
+curl -v --max-time 10 https://www.example.net 2>&1 | grep -E "(SSL|TLS|certificate|Connected)"
 
 # Opción 4: Si el laboratorio no tiene acceso a Internet, usar un certificado de prueba
 # El instructor debe proveer archivos .pem de referencia como alternativa
@@ -832,7 +930,7 @@ grep -c "BEGIN CERTIFICATE" site1_fullchain.pem
 Al finalizar el laboratorio, los archivos generados son **certificados públicos** (no contienen información confidencial). Sin embargo, mantén el directorio organizado para las prácticas siguientes:
 
 ```bash
-cd ~/labs/certs/practica1
+cd "$LAB_ROOT/evidence"
 
 # Verificar qué archivos se generaron
 ls -lh
@@ -846,10 +944,10 @@ ls -lh
 rm -f site1.crl intermediate.der chain_cert_*.pem 2>/dev/null
 
 echo "Archivos conservados para prácticas futuras:"
-ls -lh ~/labs/certs/practica1/
+ls -lh "$LAB_ROOT/evidence/"
 ```
 
-> **Recordatorio para prácticas posteriores:** Los archivos `site1_leaf.pem` y `chain_intermediate.pem` se referenciarán en la Práctica 5 para ejercicios de validación de cadena de confianza. Mantén el directorio `~/labs/certs/practica1/` intacto.
+> **Recordatorio para prácticas posteriores:** Los archivos `site1_leaf.pem` y `chain_intermediate.pem` son evidencia opcional. La Práctica 5 utiliza artefactos reproducibles propios y no depende de estos archivos.
 
 ---
 
@@ -890,4 +988,4 @@ ls -lh ~/labs/certs/practica1/
 
 ---
 
-> **Próxima práctica:** En el **Lab 01-00-02 (Práctica 2)** utilizarás OpenSSL para generar tu propia CA raíz, una CA intermedia y un certificado de entidad final, aplicando los conceptos de firma digital y cadena de confianza que acabas de analizar en esta práctica. Conserva los archivos generados en `~/labs/certs/practica1/`.
+> **Próxima práctica:** En la **Práctica 2** utilizarás OpenSSL para generar una llave, una CSR y un certificado autofirmado de entidad final. La CA raíz e intermedia se crearán únicamente en el escenario controlado del Capítulo 5.

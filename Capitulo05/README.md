@@ -1,10 +1,123 @@
 # Diagnosticar un fallo TLS simulado y proponer una ruta de corrección en nube u on-prem.
 
+## Ruta guiada esencial — 30 minutos
+
+### Escenario, objetivo y relación con la agenda
+
+Operaciones reporta tres fallos TLS: certificado expirado, hostname incorrecto y cadena incompleta. Analizarás evidencias preparadas, identificarás la causa y propondrás corrección on-premises o cloud sin desactivar validación. Cubre 5.1 a 5.6 y la práctica aprobada del Capítulo 5.
+
+### Prerrequisitos y archivos
+
+- OpenSSL y curl; conceptos de SAN, vigencia y cadena.
+- El instructor proporciona tres endpoints aislados o evidencias reproducibles, sin secretos reales.
+- Placeholders: `<API_URL>`, `<SERVICE_HOSTNAME>`, `<SERVICE_PORT>`, `<CA_CERT_PATH>`, `<AZURE_KEY_VAULT_NAME>`, `<AWS_REGION>` y `<AWS_CERTIFICATE_ARN>`.
+- Se crean `evidence/diagnosis-expired.md`, `diagnosis-hostname.md`, `diagnosis-chain.md` y `remediation-plan.md`.
+
+```mermaid
+flowchart LR
+    E[Error TLS] --> T[Vigencia]
+    T --> S[SAN/hostname]
+    S --> C[Cadena presentada]
+    C --> R[Confianza y revocación]
+    R --> F[Configuración]
+```
+
+#### Mapa visual: ciclo de vida operativo
+
+```mermaid
+flowchart LR
+    I[Inventario] --> M[Monitoreo]
+    M --> N[Renovación]
+    N --> O[Rotación y despliegue]
+    O --> A[Auditoría]
+    A --> R[Revocación cuando aplica]
+```
+
+La revocación comunica un cambio de estado; no significa borrar el certificado de todos los sistemas.
+
+### Procedimiento esencial
+
+1. Prepara el directorio y copia únicamente los certificados/evidencias públicas suministradas:
+
+   ```bash
+   export LAB_ROOT="${LAB_ROOT:-$HOME/cert-digital-lab}"
+   mkdir -p "$LAB_ROOT/evidence"
+   cd "$LAB_ROOT/evidence"
+   ```
+
+2. Para cada escenario ejecuta, cuando exista endpoint:
+
+   ```bash
+   openssl s_client -connect "<SERVICE_HOSTNAME>:<SERVICE_PORT>" -servername "<SERVICE_HOSTNAME>" \
+     -CAfile "<CA_CERT_PATH>" -verify_hostname "<SERVICE_HOSTNAME>" -showcerts </dev/null
+   curl -v --cacert "<CA_CERT_PATH>" "<API_URL>"
+   ```
+
+3. Diagnostica expiración:
+
+   ```bash
+   openssl x509 -in "<CERTIFICATE_PATH>" -noout -dates -checkend 0
+   ```
+
+   Evidencia: `certificate has expired` o `notAfter` pasado. Corrección: renovar/reemitir, desplegar el nuevo certificado y validar antes de retirar el anterior.
+
+4. Diagnostica hostname:
+
+   ```bash
+   openssl x509 -in "<CERTIFICATE_PATH>" -noout -subject -ext subjectAltName
+   openssl x509 -in "<CERTIFICATE_PATH>" -noout -checkhost "<SERVICE_HOSTNAME>"
+   ```
+
+   Evidencia: el SAN no contiene el hostname. Corrección: reemitir con SAN exacto y actualizar la asociación del servicio; no desactivar hostname verification.
+
+5. Diagnostica cadena:
+
+   ```bash
+   openssl s_client -connect "<SERVICE_HOSTNAME>:<SERVICE_PORT>" -servername "<SERVICE_HOSTNAME>" -showcerts </dev/null
+   openssl verify -CAfile "<CA_CERT_PATH>" -untrusted "<INTERMEDIATE_CA_PATH>" "<CERTIFICATE_PATH>"
+   ```
+
+   Evidencia: `unable to get local issuer certificate` o falta de intermedia. Corrección: configurar leaf seguido de intermedias; la raíz normalmente permanece en el trust store del cliente.
+
+6. Completa las tres fichas con: síntoma, comando, evidencia, causa raíz, corrección, validación posterior, propietario y fecha objetivo.
+
+7. En `remediation-plan.md`, distingue cloud:
+
+   - Azure Key Vault administra el objeto certificado/llave según política y exportabilidad; el servicio integrado determina el despliegue TLS.
+   - AWS Certificate Manager aprovisiona/importa certificados y los asocia a servicios compatibles; los importados no tienen la misma renovación administrada que los públicos emitidos por ACM.
+   - Verifica siempre inventario, alertas, renovación, rotación, revocación, permisos y auditoría. No asumas que ambos servicios son equivalentes.
+
+### Resultado esperado y validación final
+
+- Cada escenario tiene una causa única sustentada por evidencia observable.
+- La propuesta no usa `--insecure`, no acepta cualquier certificado y no expone llaves.
+- La validación final repite el comando original y exige hostname, vigencia y cadena correctos.
+- El estudiante diferencia renovación, rotación y revocación.
+
+### Seguridad, troubleshooting y limpieza
+
+- Usa recursos cloud de laboratorio y mínimo privilegio; no importes material productivo.
+- No asumas que una llave de Key Vault, un certificado administrado o un certificado ACM es exportable. Verifica origen, política y servicio consumidor.
+- No imprimas respuestas CLI que contengan secretos ni guardes credenciales en variables del laboratorio. Usa el mecanismo de identidad/credenciales administrado de la plataforma.
+- Si no hay endpoint, analiza las salidas preparadas y valida certificados públicos offline.
+- Si OpenSSL carece de `-verify_hostname`, usa `x509 -checkhost` y documenta la versión.
+- Detén únicamente PID registrados. Elimina fixtures con llave privada al terminar; conserva fichas sin secretos.
+
+### Reflexión
+
+1. ¿Por qué renovar no equivale a revocar?
+2. ¿Qué evidencia distingue hostname mismatch de cadena incompleta?
+3. ¿Qué cambia entre un certificado administrado y uno importado en cloud?
+
+### Actividades opcionales — fuera de los 30 minutos
+
+Construir la PKI completa, levantar los tres servidores defectuosos, crear alarmas cloud y ejecutar el script de monitoreo. El procedimiento ampliado sirve como anexo del instructor.
+
 ## Metadatos
 
 | Campo            | Detalle                                      |
 |------------------|----------------------------------------------|
-| **Duración**     | 30 minutos                                   |
+| **Duración**     | 55 minutos (ruta esencial)                   |
 | **Complejidad**  | Alta                                         |
 | **Nivel Bloom**  | Crear (Síntesis y evaluación aplicada)       |
 | **Modalidad**    | Individual / Parejas                         |
@@ -41,7 +154,7 @@ En esta práctica el estudiante configurará deliberadamente tres escenarios de 
 - `curl` 7.x o superior.
 - Terminal de Linux (o WSL2 en Windows).
 - Editor de texto (nano, vim, VS Code).
-- Directorio de trabajo de prácticas anteriores: `~/labs/certs/` con la CA local y llave privada generadas en la Práctica 2.
+- Directorio `<LAB_ROOT>` de prácticas anteriores. Este capítulo crea su propia CA de laboratorio; el certificado leaf del Capítulo 2 no es una CA y no se reutiliza para firmar.
 
 > **Nota:** Si no completaste la Práctica 2, el Paso 1 de esta práctica incluye comandos para generar una CA local mínima desde cero.
 
@@ -71,8 +184,9 @@ En esta práctica el estudiante configurará deliberadamente tres escenarios de 
 
 ```bash
 # Crear directorio de trabajo para esta práctica
-mkdir -p ~/labs/certs/practica5
-cd ~/labs/certs/practica5
+export LAB_ROOT="${LAB_ROOT:-$HOME/cert-digital-lab}"
+mkdir -p "$LAB_ROOT"/{certs,private,csr,exports,signed,scripts,config,evidence}
+cd "$LAB_ROOT/evidence"
 
 # Verificar herramientas disponibles
 openssl version
@@ -84,18 +198,20 @@ curl --version | head -1
 
 ---
 
-## Procedimiento Paso a Paso
+## Anexo opcional: procedimiento ampliado
+
+> **Referencia no ejecutable sin revisión del instructor:** los escenarios activos deben usar fixtures controlados. No uses `--insecure`, no cambies el reloj del sistema, no cargues llaves reales en cloud y no asumas renovación/exportabilidad sin verificar el servicio y origen del certificado.
 
 ---
 
 ### Paso 0 — Preparar la Infraestructura PKI Local (CA Mínima)
 
-**Objetivo:** Crear una CA local autofirmada que firme los certificados de los tres escenarios de fallo. Si ya cuentas con la CA de la Práctica 2, puedes reutilizarla; de lo contrario, ejecuta los comandos a continuación.
+**Objetivo:** Crear una CA local autofirmada exclusiva de este capítulo. No reutilices `server.crt` del Capítulo 2: es un certificado de entidad final con `CA:FALSE`.
 
 #### Instrucciones
 
 ```bash
-cd ~/labs/certs/practica5
+cd "$LAB_ROOT/evidence"
 
 # 0.1 Generar la llave privada de la CA
 openssl genrsa -out ca.key 4096
@@ -107,7 +223,10 @@ openssl req -x509 -new -nodes \
   -sha256 \
   -days 3650 \
   -out ca.crt \
-  -subj "/C=MX/ST=CDMX/O=LabCA/CN=Lab Root CA"
+  -subj "/C=MX/ST=CDMX/O=LabCA/CN=Lab Root CA" \
+  -addext "basicConstraints=critical,CA:TRUE,pathlen:1" \
+  -addext "keyUsage=critical,keyCertSign,cRLSign" \
+  -addext "subjectKeyIdentifier=hash"
 
 # 0.3 Verificar el certificado de la CA
 openssl x509 -noout -subject -issuer -dates -in ca.crt
@@ -133,48 +252,25 @@ ls -la ca.key ca.crt
 
 **Objetivo:** Configurar un servidor HTTPS con un certificado cuya fecha de expiración ya pasó, diagnosticar el error `certificate has expired` y proponer la ruta de corrección.
 
-#### 1.1 Generar el certificado expirado
+#### 1.1 Preparar el fixture de certificado expirado
 
 ```bash
-cd ~/labs/certs/practica5
+cd "$LAB_ROOT/evidence"
 
-# Generar llave privada del servidor
-openssl genrsa -out server-expired.key 2048
+# Copiar el par de laboratorio suministrado por el instructor.
+# Ambos archivos deben corresponder entre sí y no contener datos de producción.
+cp "<CERTIFICATE_PATH>" server-expired.crt
+cp "<PRIVATE_KEY_PATH>" server-expired.key
 chmod 600 server-expired.key
-
-# Generar CSR
-openssl req -new \
-  -key server-expired.key \
-  -out server-expired.csr \
-  -subj "/C=MX/ST=CDMX/O=EmpresaLab/CN=servicio.empresa.local"
-
-# Firmar con la CA usando -days -1 para que el certificado nazca ya expirado
-# NOTA: algunos sistemas requieren ajustar la fecha; usa -days 0 si -days -1 falla
-openssl x509 -req \
-  -in server-expired.csr \
-  -CA ca.crt \
-  -CAkey ca.key \
-  -CAcreateserial \
-  -out server-expired.crt \
-  -days -1 \
-  -sha256
 
 # Verificar que el certificado esté expirado
 openssl x509 -noout -dates -in server-expired.crt
 ```
 
-> **Nota alternativa:** Si tu versión de OpenSSL no acepta `-days -1`, usa el siguiente método con fechas explícitas:
-> ```bash
-> openssl x509 -req \
->   -in server-expired.csr \
->   -CA ca.crt \
->   -CAkey ca.key \
->   -CAcreateserial \
->   -out server-expired.crt \
->   -startdate 20200101000000Z \
->   -enddate 20200102000000Z \
->   -sha256
-> ```
+> **Requisito del fixture:** el instructor debe validar previamente su vigencia expirada,
+> su correspondencia con la llave privada de laboratorio y su ausencia de datos reales.
+> No cambies la fecha del sistema y no uses `-days -1`, `-days 0` ni
+> `x509 -req -startdate/-enddate`: esos flujos no son portables para emitir este fixture.
 
 **Salida esperada de `-noout -dates`:**
 ```
@@ -286,7 +382,7 @@ El cliente TLS rechaza el certificado porque su período de validez ha concluido
 - Para certificados importados: automatizar con Azure Automation o Function App
   que detecte la expiración via evento de Event Grid y reemplace el certificado.
 - Comando para revisar vigencia en AKV:
-  `az keyvault certificate show --vault-name <KV> --name <cert> --query "attributes"`
+  `az keyvault certificate show --vault-name <AZURE_KEY_VAULT_NAME> --name <CERTIFICATE_NAME> --query "attributes"`
 
 ## Ruta de corrección — Cloud (AWS ACM)
 - Si el certificado fue emitido por ACM y está asociado a un ALB/CloudFront:
@@ -307,18 +403,18 @@ kill $SERVER_PID 2>/dev/null
 
 ### Paso 2 — Escenario 2: Hostname Mismatch
 
-**Objetivo:** Configurar un servidor con un certificado emitido para `servicio.empresa.local` pero accedido como `app.empresa.local`, diagnosticar el error de nombre de host no coincidente y proponer la corrección.
+**Objetivo:** Configurar un servidor con un certificado emitido para `service.local` pero accedido como `api.service.local`, diagnosticar el error de nombre de host no coincidente y proponer la corrección.
 
 #### 2.1 Generar el certificado con SAN incorrecto
 
 ```bash
-cd ~/labs/certs/practica5
+cd "$LAB_ROOT/evidence"
 
 # Generar llave privada
 openssl genrsa -out server-mismatch.key 2048
 chmod 600 server-mismatch.key
 
-# Crear archivo de extensiones con SAN = servicio.empresa.local (NO app.empresa.local)
+# Crear archivo de extensiones con SAN = service.local (NO api.service.local)
 cat > san-mismatch.cnf << 'EOF'
 [req]
 req_extensions = v3_req
@@ -327,19 +423,22 @@ distinguished_name = req_distinguished_name
 [v3_req]
 subjectAltName = @alt_names
 [alt_names]
-DNS.1 = servicio.empresa.local
+DNS.1 = service.local
 EOF
 
 # Generar CSR con SAN
 openssl req -new \
   -key server-mismatch.key \
   -out server-mismatch.csr \
-  -subj "/C=MX/ST=CDMX/O=EmpresaLab/CN=servicio.empresa.local" \
+  -subj "/C=MX/ST=CDMX/O=Laboratorio/CN=service.local" \
   -config san-mismatch.cnf
 
 # Crear archivo de extensiones para la firma
 cat > ext-mismatch.cnf << 'EOF'
-subjectAltName = DNS:servicio.empresa.local
+subjectAltName = DNS:service.local
+basicConstraints = critical,CA:FALSE
+keyUsage = critical,digitalSignature,keyEncipherment
+extendedKeyUsage = serverAuth
 EOF
 
 # Firmar el certificado (válido 365 días — NO expirado)
@@ -374,7 +473,7 @@ sleep 1
 # Añadir entrada en /etc/hosts para simular el acceso por nombre incorrecto
 # (requiere sudo; si no tienes sudo, usa el flag --resolve de curl)
 # Opción A: con /etc/hosts
-echo "127.0.0.1  app.empresa.local" | sudo tee -a /etc/hosts
+echo "127.0.0.1  api.service.local" | sudo tee -a /etc/hosts
 
 # Opción B: sin sudo, usando --resolve de curl
 # (usaremos esta opción en los comandos de diagnóstico)
@@ -382,21 +481,21 @@ echo "127.0.0.1  app.empresa.local" | sudo tee -a /etc/hosts
 # Diagnóstico con openssl s_client — accediendo al nombre INCORRECTO
 echo "Q" | openssl s_client \
   -connect 127.0.0.1:4444 \
-  -servername app.empresa.local \
+  -servername api.service.local \
   -CAfile ca.crt \
   2>&1 | grep -E "Verify|error|subject|altname|hostname"
 
 # Diagnóstico con curl
 curl -v \
   --cacert ca.crt \
-  --resolve app.empresa.local:4444:127.0.0.1 \
-  https://app.empresa.local:4444/ \
+  --resolve api.service.local:4444:127.0.0.1 \
+  https://api.service.local:4444/ \
   2>&1 | grep -E "SSL|hostname|certif|error|subject"
 
 # Inspeccionar los SAN del certificado presentado por el servidor
 echo "Q" | openssl s_client \
   -connect 127.0.0.1:4444 \
-  -servername app.empresa.local \
+  -servername api.service.local \
   -CAfile ca.crt \
   2>&1 | openssl x509 -noout -text 2>/dev/null | grep -A5 "Subject Alternative"
 ```
@@ -408,7 +507,7 @@ verify error:num=62:hostname mismatch
 Verify return code: 62 (hostname mismatch)
 
 # curl:
-SSL: certificate subject name 'servicio.empresa.local' does not match target host name 'app.empresa.local'
+SSL: certificate subject name 'service.local' does not match target host name 'api.service.local'
 curl: (60) SSL: certificate subject name ...
 ```
 
@@ -419,34 +518,34 @@ cat > ficha-escenario2.md << 'EOF'
 # Ficha de Diagnóstico — Escenario 2: Hostname Mismatch
 
 ## Síntoma observado
-- curl: `SSL: certificate subject name 'servicio.empresa.local' does not match target host name 'app.empresa.local'`
+- curl: `SSL: certificate subject name 'service.local' does not match target host name 'api.service.local'`
 - openssl s_client: `verify error:num=62:hostname mismatch`
 - El certificado es válido en fecha y está firmado por una CA de confianza,
   pero el nombre al que se accede no está en el CN ni en los SAN.
 
 ## Comando de diagnóstico usado
 ```
-openssl s_client -connect 127.0.0.1:4444 -servername app.empresa.local -CAfile ca.crt
-curl -v --cacert ca.crt --resolve app.empresa.local:4444:127.0.0.1 https://app.empresa.local:4444/
+openssl s_client -connect 127.0.0.1:4444 -servername api.service.local -CAfile ca.crt
+curl -v --cacert ca.crt --resolve api.service.local:4444:127.0.0.1 https://api.service.local:4444/
 openssl x509 -noout -text -in server-mismatch.crt | grep -A3 "Subject Alternative"
 ```
 
 ## Causa raíz identificada
-El certificado fue emitido con SAN = `DNS:servicio.empresa.local`.
-El cliente accede a `app.empresa.local`, que no aparece en ningún SAN del certificado.
+El certificado fue emitido con SAN = `DNS:service.local`.
+El cliente accede a `api.service.local`, que no aparece en ningún SAN del certificado.
 Nota: el CN ya no es suficiente para validación de hostname en navegadores modernos
 (RFC 2818); los SAN son el campo autoritativo.
 
 ## Ruta de corrección — Opción A: Reemitir con SAN correcto
 1. Crear nuevo archivo de extensiones con ambos nombres:
    ```
-   subjectAltName = DNS:servicio.empresa.local, DNS:app.empresa.local
+   subjectAltName = DNS:service.local, DNS:api.service.local
    ```
 2. Generar nuevo CSR y firmar con la CA interna.
 3. Reemplazar el certificado en el servidor.
 
 ## Ruta de corrección — Opción B: Certificado Wildcard
-1. Emitir un certificado con SAN = `DNS:*.empresa.local`.
+1. Emitir un certificado con SAN explícito para cada hostname del laboratorio; evitar wildcard salvo necesidad justificada.
 2. Cubre todos los subdominios de primer nivel de `empresa.local`.
 3. Consideración de seguridad: un wildcard comprometido afecta todos los subdominios.
 
@@ -457,7 +556,7 @@ Nota: el CN ya no es suficiente para validación de hostname en navegadores mode
   "x509CertificateProperties": {
     "subject": "CN=empresa.local",
     "subjectAlternativeNames": {
-      "dnsNames": ["servicio.empresa.local", "app.empresa.local"]
+      "dnsNames": ["service.local", "api.service.local"]
     }
   }
   ```
@@ -467,8 +566,8 @@ Nota: el CN ya no es suficiente para validación de hostname en navegadores mode
 - Solicitar un nuevo certificado incluyendo todos los nombres:
   ```bash
   aws acm request-certificate \
-    --domain-name servicio.empresa.local \
-    --subject-alternative-names app.empresa.local \
+    --domain-name service.local \
+    --subject-alternative-names api.service.local \
     --validation-method DNS
   ```
 - Asociar el nuevo ARN al listener del ALB/CloudFront.
@@ -490,7 +589,7 @@ kill $SERVER_PID2 2>/dev/null
 #### 3.1 Crear una CA intermedia y un certificado de entidad final
 
 ```bash
-cd ~/labs/certs/practica5
+cd "$LAB_ROOT/evidence"
 
 # --- Crear CA Intermedia ---
 openssl genrsa -out intermediate-ca.key 2048
@@ -522,13 +621,16 @@ openssl genrsa -out server-chain.key 2048
 chmod 600 server-chain.key
 
 cat > ext-server-chain.cnf << 'EOF'
-subjectAltName = DNS:app.empresa.local
+subjectAltName = DNS:api.service.local
+basicConstraints = critical,CA:FALSE
+keyUsage = critical,digitalSignature,keyEncipherment
+extendedKeyUsage = serverAuth
 EOF
 
 openssl req -new \
   -key server-chain.key \
   -out server-chain.csr \
-  -subj "/C=MX/ST=CDMX/O=EmpresaLab/CN=app.empresa.local"
+  -subj "/C=MX/ST=CDMX/O=Laboratorio/CN=api.service.local"
 
 openssl x509 -req \
   -in server-chain.csr \
@@ -586,8 +688,8 @@ echo "Q" | openssl s_client \
 # curl también falla
 curl -v \
   --cacert ca.crt \
-  --resolve app.empresa.local:4445:127.0.0.1 \
-  https://app.empresa.local:4445/ \
+  --resolve api.service.local:4445:127.0.0.1 \
+  https://api.service.local:4445/ \
   2>&1 | grep -E "SSL|unable|certif|error|chain"
 ```
 
@@ -627,8 +729,8 @@ echo "Q" | openssl s_client \
 
 curl -v \
   --cacert ca.crt \
-  --resolve app.empresa.local:4446:127.0.0.1 \
-  https://app.empresa.local:4446/ \
+  --resolve api.service.local:4446:127.0.0.1 \
+  https://api.service.local:4446/ \
   2>&1 | grep -E "SSL|certif|issuer|200|Verify"
 ```
 
@@ -660,7 +762,7 @@ cat > ficha-escenario3.md << 'EOF'
 ## Comando de diagnóstico usado
 ```
 openssl s_client -connect 127.0.0.1:4445 -CAfile ca.crt -showcerts
-curl -v --cacert ca.crt --resolve app.empresa.local:4445:127.0.0.1 https://app.empresa.local:4445/
+curl -v --cacert ca.crt --resolve api.service.local:4445:127.0.0.1 https://api.service.local:4445/
 ```
 
 ## Causa raíz identificada
@@ -688,7 +790,7 @@ y no puede completar la cadena de confianza hasta la CA raíz.
     -inkey server.key \
     -certfile intermediate-ca.crt \
     -out server-complete.pfx
-  az keyvault certificate import --vault-name <KV> --name <cert> --file server-complete.pfx
+  az keyvault certificate import --vault-name <AZURE_KEY_VAULT_NAME> --name <CERTIFICATE_NAME> --file server-complete.pfx
   ```
 - AKV almacena la cadena completa y la presenta correctamente cuando se vincula
   a App Service o Application Gateway.
@@ -845,7 +947,7 @@ aws cloudwatch put-metric-alarm \
   --alarm-name "CertificadoProximoExpirar" \
   --metric-name DaysToExpiry \
   --namespace AWS/CertificateManager \
-  --dimensions Name=CertificateArn,Value=<CERT_ARN> \
+  --dimensions Name=CertificateArn,Value=<AWS_CERTIFICATE_ARN> \
   --statistic Minimum \
   --period 86400 \
   --threshold 30 \
@@ -896,7 +998,7 @@ ls -la *.key
 Ejecuta los siguientes comandos para confirmar que completaste todos los objetivos:
 
 ```bash
-cd ~/labs/certs/practica5
+cd "$LAB_ROOT/evidence"
 
 echo "=========================================="
 echo "VALIDACIÓN FINAL — Lab 05-00-01"
@@ -996,40 +1098,26 @@ echo "Son herramientas de diagnóstico diferencial para confirmar que el problem
 
 ## Solución de Problemas
 
-### Problema 1: `openssl x509 -req ... -days -1` falla con error de fecha
+### Problema 1: el fixture expirado no está disponible o no corresponde a la llave
 
 **Síntoma:**
 ```
-Error: notBefore/notAfter dates out of range
+FileNotFoundError o `KEY_VALUES_MISMATCH`
 ```
-o el certificado se genera con fechas en el futuro en lugar del pasado.
+o `openssl x509 -checkend 0` indica que el certificado aún está vigente.
 
 **Causa raíz:**
-Versiones recientes de OpenSSL (3.x) aplican validaciones más estrictas sobre rangos de fechas. El parámetro `-days -1` puede interpretarse de forma diferente o rechazarse.
+El fixture no fue entregado, no está expirado o su llave privada no corresponde al certificado.
 
 **Solución:**
-Usar fechas explícitas con `-startdate` y `-enddate` en formato UTC:
+Solicitar al instructor el par controlado y comprobarlo antes de iniciar el servidor:
 ```bash
-openssl x509 -req \
-  -in server-expired.csr \
-  -CA ca.crt \
-  -CAkey ca.key \
-  -CAcreateserial \
-  -out server-expired.crt \
-  -startdate 20200101000000Z \
-  -enddate   20200102000000Z \
-  -sha256
-
-# Verificar que las fechas están en el pasado
 openssl x509 -noout -dates -in server-expired.crt
+openssl x509 -checkend 0 -noout -in server-expired.crt; test $? -ne 0
+openssl x509 -in server-expired.crt -pubkey -noout | openssl pkey -pubin -outform DER | openssl sha256
+openssl pkey -in server-expired.key -pubout -outform DER | openssl sha256
 ```
-Si el sistema aún lo rechaza, usar `faketime` (si está disponible) o modificar temporalmente la fecha del sistema (restaurar inmediatamente después):
-```bash
-# Con faketime (instalar con: sudo apt install faketime)
-faketime '2020-01-01 00:00:00' openssl x509 -req \
-  -in server-expired.csr -CA ca.crt -CAkey ca.key \
-  -CAcreateserial -out server-expired.crt -days 1 -sha256
-```
+Los dos hashes SHA-256 deben coincidir. No cambies el reloj del sistema para fabricar el escenario.
 
 ---
 
@@ -1071,23 +1159,25 @@ openssl rsa  -noout -modulus -in server-chain.key | md5sum
 ```bash
 cd ~/labs/certs/practica5
 
-# Asegurarse de que no quedan servidores Python corriendo
-pkill -f "server_tls.py" 2>/dev/null
+# Detener únicamente los PID registrados por este laboratorio
+for pid in "${SERVER_PID1:-}" "${SERVER_PID2:-}" "${SERVER_PID3:-}" "${SERVER_PID4:-}"; do
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then kill "$pid"; fi
+done
 echo "Servidores HTTPS de prueba detenidos."
 
 # Eliminar entrada de /etc/hosts si fue añadida (Escenario 2)
-sudo sed -i '/app\.empresa\.local/d' /etc/hosts 2>/dev/null
+sudo sed -i.bak '/api\.service\.local/d' /etc/hosts 2>/dev/null
 echo "Entrada /etc/hosts limpiada (si aplica)."
 
 # Listar artefactos generados (NO eliminar aún — pueden ser útiles para referencia)
 echo ""
 echo "=== Artefactos generados en esta práctica ==="
-ls -lh ~/labs/certs/practica5/
+ls -lh "$LAB_ROOT/evidence/"
 
 echo ""
 echo "NOTA: Los archivos .key contienen llaves privadas de laboratorio."
 echo "Puedes eliminar todo el directorio al finalizar el curso con:"
-echo "  rm -rf ~/labs/certs/practica5/"
+echo "  Revisa <LAB_ROOT>/evidence y elimina solo los artefactos sensibles identificados."
 echo ""
 echo "NUNCA subas archivos .key a repositorios públicos (Git, etc.)."
 ```

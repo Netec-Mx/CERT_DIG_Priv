@@ -1,10 +1,123 @@
 # Crear un certificado autofirmado para un servicio interno y validarlo con OpenSSL
 
+## Ruta guiada esencial — 20 minutos
+
+### Escenario, objetivo y relación con la agenda
+
+Debes habilitar TLS en `service.local` para un servicio interno de laboratorio. Crearás una llave privada, una CSR, un certificado autofirmado y una validación observable. Cubre 2.1 a 2.4 y la práctica aprobada del Capítulo 2.
+
+### Prerrequisitos y archivos
+
+- Bash y OpenSSL 1.1.1 o 3.x.
+- Comprensión de llave pública/privada, CSR, SAN y certificado autofirmado.
+- Archivos: `private/server.key`, `csr/server.csr`, `certs/server.crt` y `config/server.cnf`.
+
+```mermaid
+flowchart LR
+    K[Llave privada local] -->|firma la solicitud| C[CSR con clave pública]
+    C -->|autofirma controlada| X[Certificado leaf]
+    X --> V[Inspección y validación]
+```
+
+La llave privada no se incluye en la CSR ni se transmite. Solo se usa localmente para firmarla.
+
+### Procedimiento esencial
+
+1. Prepara el entorno con permisos restrictivos:
+
+   ```bash
+   export LAB_ROOT="${LAB_ROOT:-$HOME/cert-digital-lab}"
+   mkdir -p "$LAB_ROOT"/{certs,private,csr,exports,signed,scripts,config,evidence}
+   umask 077
+   ```
+
+2. Genera la llave privada:
+
+   ```bash
+   openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$LAB_ROOT/private/server.key"
+   chmod 600 "$LAB_ROOT/private/server.key"
+   ```
+
+3. Crea `config/server.cnf`:
+
+   ```ini
+   [req]
+   prompt = no
+   distinguished_name = dn
+   req_extensions = req_ext
+
+   [dn]
+   CN = service.local
+   O = CERT_DIG Lab
+
+   [req_ext]
+   subjectAltName = @san
+
+   [server_cert]
+   basicConstraints = critical,CA:FALSE
+   keyUsage = critical,digitalSignature,keyEncipherment
+   extendedKeyUsage = serverAuth
+   subjectAltName = @san
+
+   [san]
+   DNS.1 = service.local
+   DNS.2 = api.service.local
+   ```
+
+4. Genera e inspecciona la CSR. La CSR contiene la clave pública, no la privada:
+
+   ```bash
+   openssl req -new -key "$LAB_ROOT/private/server.key" -config "$LAB_ROOT/config/server.cnf" -out "$LAB_ROOT/csr/server.csr"
+   openssl req -in "$LAB_ROOT/csr/server.csr" -noout -verify -subject -text
+   ```
+
+5. Emite el certificado autofirmado leaf:
+
+   ```bash
+   openssl x509 -req -in "$LAB_ROOT/csr/server.csr" -signkey "$LAB_ROOT/private/server.key" \
+     -days 365 -sha256 -extfile "$LAB_ROOT/config/server.cnf" -extensions server_cert \
+     -out "$LAB_ROOT/certs/server.crt"
+   ```
+
+6. Valida estructura, SAN, vigencia y correspondencia de la clave pública:
+
+   ```bash
+   openssl x509 -in "$LAB_ROOT/certs/server.crt" -noout -subject -issuer -dates -ext subjectAltName
+   openssl x509 -in "$LAB_ROOT/certs/server.crt" -pubkey -noout | openssl pkey -pubin -outform DER | openssl sha256
+   openssl pkey -in "$LAB_ROOT/private/server.key" -pubout -outform DER | openssl sha256
+   ```
+
+### Resultado esperado y validación final
+
+- Existen los cuatro archivos previstos y `server.key` tiene permisos 600.
+- La CSR verifica correctamente, el certificado muestra `CA:FALSE`, `serverAuth` y ambos SAN.
+- Los dos hashes SHA-256 de clave pública coinciden.
+- Evidencia observable: guarda las salidas en `evidence/chapter02-validation.txt`.
+
+### Seguridad, troubleshooting y limpieza
+
+- No muestres ni versiones `server.key`; un certificado y una CSR no sustituyen esa llave.
+- En macOS, confirma que el binario usado sea OpenSSL y no otra implementación compatible parcialmente; registra `openssl version` como evidencia.
+- En Windows usa la ruta PowerShell del Capítulo 3 o OpenSSL instalado explícitamente; no pegues sintaxis Bash en PowerShell.
+- Si faltan SAN, confirma `req_extensions`, `-extfile` y `-extensions server_cert`.
+- Si los hashes difieren, detén el flujo y regenera CSR/certificado con la llave correcta.
+- Conserva los tres artefactos canónicos para el Capítulo 4. No los copies a repositorios.
+
+### Reflexión
+
+1. ¿Qué información incluye una CSR y cuál nunca debe incluir?
+2. ¿Por qué un certificado autofirmado no es confiable automáticamente?
+3. ¿Qué diferencia hay entre extensión de archivo y codificación PEM/DER?
+
+### Actividades opcionales — fuera de los 20 minutos
+
+Generar una llave EC, convertir a DER, crear `<PFX_PATH>` protegido con `<PFX_PASSWORD>` y ejecutar el procedimiento ampliado. Son variantes, no requisitos de la práctica principal.
+
 ## Metadatos
 
 | Campo            | Detalle                                      |
 |------------------|----------------------------------------------|
-| **Duración**     | 20 minutos                                   |
+| **Duración**     | 45 minutos (ruta esencial)                   |
 | **Complejidad**  | Media                                        |
 | **Nivel Bloom**  | Crear (Create)                               |
 | **Entorno**      | Linux / WSL2                                 |
@@ -14,7 +127,7 @@
 
 ## Descripción General
 
-En este laboratorio asumirás el rol de administrador de infraestructura de una empresa que necesita proteger un portal de monitoreo interno (`intranet.empresa.local`). Partiendo desde cero, generarás llaves privadas RSA 4096 y ECDSA P-256, crearás un archivo de configuración OpenSSL con extensiones X.509 v3 completas (SAN, BasicConstraints, KeyUsage), producirás un certificado autofirmado válido por 365 días y lo convertirás a los formatos PFX/PKCS#12 y DER. Finalizarás inspeccionando y validando el certificado con comandos OpenSSL para confirmar su estructura, vigencia y coherencia con la llave privada.
+En este laboratorio asumirás el rol de administrador de infraestructura que necesita proteger un servicio interno reservado para laboratorio (`service.local`). Partiendo desde cero, generarás llaves privadas RSA 4096 y ECDSA P-256, crearás un archivo de configuración OpenSSL con extensiones X.509 v3 completas (SAN, BasicConstraints, KeyUsage), producirás un certificado autofirmado válido por 365 días y lo convertirás a los formatos PFX/PKCS#12 y DER. Finalizarás inspeccionando y validando el certificado con comandos OpenSSL para confirmar su estructura, vigencia y coherencia con la llave privada.
 
 ---
 
@@ -42,7 +155,7 @@ Al completar este laboratorio, podrás:
 
 - Sistema Linux (nativo o WSL2 en Windows 10/11).
 - OpenSSL 1.1.1 o superior instalado y funcional.
-- Permisos de escritura en el directorio de trabajo (`~/labs/certs/`).
+- Permisos de escritura en `<LAB_ROOT>` (`$HOME/cert-digital-lab`).
 
 ---
 
@@ -70,8 +183,9 @@ Ejecuta los siguientes comandos para crear el directorio de trabajo y verificar 
 
 ```bash
 # Crear directorio de trabajo organizado
-mkdir -p ~/labs/certs
-cd ~/labs/certs
+export LAB_ROOT="$HOME/cert-digital-lab"
+mkdir -p "$LAB_ROOT"/{certs,private,csr,exports,signed,scripts,config,evidence}
+cd "$LAB_ROOT"
 
 # Verificar versión de OpenSSL
 openssl version -a
@@ -84,7 +198,9 @@ umask 077
 
 ---
 
-## Procedimiento Paso a Paso
+## Anexo opcional: procedimiento ampliado
+
+> **Referencia no ejecutable sin revisión del instructor:** prioriza la ruta esencial. Este anexo conserva variantes con nombres históricos y comparaciones MD5; MD5 no se considera seguro y debe sustituirse por la comparación SHA-256 de claves públicas mostrada en la ruta esencial.
 
 ---
 
@@ -97,7 +213,7 @@ umask 077
 1. Asegúrate de estar en el directorio de trabajo con `umask 077` activo:
 
 ```bash
-cd ~/labs/certs
+cd "$LAB_ROOT"
 umask 077
 ```
 
@@ -235,7 +351,7 @@ ST = Ciudad de Mexico
 L  = Ciudad de Mexico
 O  = Empresa Ejemplo S.A. de C.V.
 OU = Infraestructura TI
-CN = intranet.empresa.local
+CN = service.local
 
 [ v3_req ]
 # Extensiones incluidas en el CSR
@@ -244,7 +360,7 @@ basicConstraints = CA:FALSE
 keyUsage = digitalSignature, keyEncipherment
 extendedKeyUsage = serverAuth
 
-[ v3_ca ]
+[ server_cert ]
 # Extensiones para el certificado autofirmado final
 subjectAltName = @alt_names
 basicConstraints = critical, CA:FALSE
@@ -255,8 +371,8 @@ authorityKeyIdentifier = keyid:always, issuer
 
 [ alt_names ]
 # Subject Alternative Names: DNS e IPs del servicio interno
-DNS.1 = intranet.empresa.local
-DNS.2 = monitoreo.empresa.local
+DNS.1 = service.local
+DNS.2 = api.service.local
 DNS.3 = localhost
 IP.1  = 192.168.1.100
 IP.2  = 127.0.0.1
@@ -322,14 +438,14 @@ Certificate Request:
         Version: 1 (0x0)
         Subject: C=MX, ST=Ciudad de Mexico, L=Ciudad de Mexico,
                  O=Empresa Ejemplo S.A. de C.V., OU=Infraestructura TI,
-                 CN=intranet.empresa.local
+                 CN=service.local
         Subject Public Key Info:
             Public Key Algorithm: rsaEncryption
                 RSA Public-Key: (4096 bit)
         Attributes:
         Requested Extensions:
             X509v3 Subject Alternative Name:
-                DNS:intranet.empresa.local, DNS:monitoreo.empresa.local,
+                DNS:service.local, DNS:api.service.local,
                 DNS:localhost, IP Address:192.168.1.100, IP Address:127.0.0.1
             X509v3 Basic Constraints:
                 CA:FALSE
@@ -345,7 +461,7 @@ Certificate Request:
 ```bash
 # Verificar que el Subject contiene el CN correcto
 openssl req -in intranet.csr -subject -noout
-# Salida esperada: subject=C=MX, ST=Ciudad de Mexico, ..., CN=intranet.empresa.local
+# Salida esperada: subject=C=MX, ST=Ciudad de Mexico, ..., CN=service.local
 ```
 
 ---
@@ -356,7 +472,7 @@ openssl req -in intranet.csr -subject -noout
 
 #### Instrucciones
 
-1. Genera el certificado autofirmado a partir del CSR, aplicando las extensiones de la sección `v3_ca`:
+1. Genera el certificado autofirmado a partir del CSR, aplicando las extensiones de la sección `server_cert`:
 
 ```bash
 openssl x509 -req \
@@ -365,7 +481,7 @@ openssl x509 -req \
   -days 365 \
   -sha256 \
   -extfile intranet-openssl.cnf \
-  -extensions v3_ca \
+  -extensions server_cert \
   -out intranet.crt
 ```
 
@@ -393,6 +509,16 @@ openssl x509 -in intranet.crt -noout -dates
 openssl x509 -in intranet.crt -noout -subject -issuer
 ```
 
+6. Publica los artefactos con los nombres canónicos que utilizará el Capítulo 4:
+
+```bash
+install -m 600 intranet-rsa4096.key "$LAB_ROOT/private/server.key"
+cp intranet.csr "$LAB_ROOT/csr/server.csr"
+cp intranet.crt "$LAB_ROOT/certs/server.crt"
+```
+
+`server.key` es una llave privada; no debe copiarse fuera de `private/` ni versionarse.
+
 #### Salida esperada
 
 ```
@@ -403,15 +529,15 @@ Certificate:
         Serial Number:
             7a:3f:...
         Signature Algorithm: sha256WithRSAEncryption
-        Issuer: C=MX, ST=Ciudad de Mexico, ..., CN=intranet.empresa.local
+        Issuer: C=MX, ST=Ciudad de Mexico, ..., CN=service.local
         Validity
             Not Before: Jun 15 10:05:00 2025 GMT
             Not After : Jun 15 10:05:00 2026 GMT
-        Subject: C=MX, ST=Ciudad de Mexico, ..., CN=intranet.empresa.local
+        Subject: C=MX, ST=Ciudad de Mexico, ..., CN=service.local
         ...
         X509v3 extensions:
             X509v3 Subject Alternative Name:
-                DNS:intranet.empresa.local, DNS:monitoreo.empresa.local,
+                DNS:service.local, DNS:api.service.local,
                 DNS:localhost, IP Address:192.168.1.100, IP Address:127.0.0.1
             X509v3 Basic Constraints: critical
                 CA:FALSE
@@ -429,8 +555,8 @@ notBefore=Jun 15 10:05:00 2025 GMT
 notAfter=Jun 15 10:05:00 2026 GMT
 
 # openssl x509 -subject -issuer
-subject=C=MX, ST=Ciudad de Mexico, ..., CN=intranet.empresa.local
-issuer=C=MX, ST=Ciudad de Mexico, ..., CN=intranet.empresa.local
+subject=C=MX, ST=Ciudad de Mexico, ..., CN=service.local
+issuer=C=MX, ST=Ciudad de Mexico, ..., CN=service.local
 ```
 
 #### Verificación
@@ -444,7 +570,7 @@ openssl x509 -in intranet.crt -text -noout | grep "Version:"
 openssl x509 -in intranet.crt -text -noout | grep -A 3 "Subject Alternative Name"
 ```
 
-> **Punto clave:** El uso de `-extfile intranet-openssl.cnf -extensions v3_ca` es fundamental. Sin este parámetro, `openssl x509 -req` generaría un certificado v1 sin extensiones, que los clientes TLS modernos rechazarían.
+> **Punto clave:** El uso de `-extfile intranet-openssl.cnf -extensions server_cert` es fundamental. Sin este parámetro, `openssl x509 -req` generaría un certificado sin las extensiones necesarias para el servicio.
 
 ---
 
@@ -460,11 +586,11 @@ openssl x509 -in intranet.crt -text -noout | grep -A 3 "Subject Alternative Name
 openssl pkcs12 -export \
   -inkey intranet-rsa4096.key \
   -in intranet.crt \
-  -name "intranet.empresa.local - Portal Monitoreo" \
+  -name "service.local - CERT_DIG Lab" \
   -out intranet.pfx
 ```
 
-> Cuando se te solicite, ingresa una contraseña de exportación. Usa algo memorable para el laboratorio, por ejemplo: `Lab2024!`. **En producción, usa una contraseña fuerte y guárdala en un vault.**
+> Cuando se solicite, ingresa `<PFX_PASSWORD>` de forma interactiva. No escribas contraseñas literales en el README, scripts, historial o repositorio.
 
 2. Verifica el contenido del archivo PFX:
 
@@ -633,7 +759,7 @@ Una vez completados todos los pasos, ejecuta las siguientes verificaciones final
 ### Verificación 1: Inventario de archivos generados
 
 ```bash
-cd ~/labs/certs
+cd "$LAB_ROOT"
 ls -lh intranet*
 ```
 
@@ -680,7 +806,7 @@ openssl x509 -in intranet.crt -text -noout | grep -E \
 ```
 === Extensiones del certificado ===
             X509v3 Subject Alternative Name:
-                DNS:intranet.empresa.local, DNS:monitoreo.empresa.local,
+                DNS:service.local, DNS:api.service.local,
                 DNS:localhost, IP Address:192.168.1.100, IP Address:127.0.0.1
             X509v3 Basic Constraints: critical
                 CA:FALSE
@@ -739,14 +865,14 @@ openssl x509 -req \
   -days 365 \
   -sha256 \
   -extfile intranet-openssl.cnf \
-  -extensions v3_ca \
+  -extensions server_cert \
   -out intranet.crt
 
 # Confirmar que ahora es versión 3 con extensiones
 openssl x509 -in intranet.crt -text -noout | grep -E "Version:|Subject Alternative Name"
 ```
 
-Asegúrate también de que la sección `[ v3_ca ]` existe en el archivo `intranet-openssl.cnf` con el nombre exacto referenciado en `-extensions v3_ca`.
+Asegúrate también de que la sección `[ server_cert ]` existe en el archivo `intranet-openssl.cnf` con el nombre exacto referenciado en `-extensions server_cert`.
 
 ---
 
@@ -802,7 +928,7 @@ openssl x509 -req \
   -signkey intranet-rsa4096.key \
   -days 365 -sha256 \
   -extfile intranet-openssl.cnf \
-  -extensions v3_ca \
+  -extensions server_cert \
   -out intranet.crt
 ```
 
@@ -815,13 +941,13 @@ Al finalizar el laboratorio, los archivos generados **no deben eliminarse** si p
 ### Verificar y corregir permisos
 
 ```bash
-cd ~/labs/certs
+cd "$LAB_ROOT"
 
 # Asegurar permisos 600 en todos los archivos sensibles
 chmod 600 intranet-rsa4096.key intranet-ecdsa-p256.key intranet.pfx
 
 # Verificar permisos finales
-ls -la ~/labs/certs/
+ls -la "$LAB_ROOT/"
 ```
 
 ### Si deseas limpiar completamente (solo al terminar el curso)
@@ -829,7 +955,7 @@ ls -la ~/labs/certs/
 ```bash
 # ⚠️ EJECUTAR SOLO AL FINALIZAR EL CURSO COMPLETO
 # Esto eliminará todos los artefactos del laboratorio
-rm -rf ~/labs/certs/
+echo "Limpieza completa omitida: elimina únicamente artefactos identificados después de revisar la ruta absoluta de <LAB_ROOT>."
 ```
 
 ### Restaurar umask por defecto
@@ -849,9 +975,9 @@ En este laboratorio completaste el ciclo completo de creación y gestión de un 
 |---|---|
 | Llave RSA 4096 generada | `openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:4096` |
 | Llave ECDSA P-256 generada (comparativa) | `openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256` |
-| Archivo `.cnf` con SAN y extensiones v3 | Editor de texto + secciones `[v3_ca]` y `[alt_names]` |
+| Archivo `.cnf` con SAN y extensiones v3 | Editor de texto + secciones `[server_cert]` y `[alt_names]` |
 | CSR creado con campos Subject correctos | `openssl req -new -key ... -config ...` |
-| Certificado autofirmado X.509 v3 generado | `openssl x509 -req ... -extfile ... -extensions v3_ca` |
+| Certificado autofirmado X.509 v3 generado | `openssl x509 -req ... -extfile ... -extensions server_cert` |
 | Convertido a PKCS#12/PFX | `openssl pkcs12 -export` |
 | Convertido a DER | `openssl x509 -outform DER` |
 | Coherencia llave-certificado verificada | Comparación de módulos MD5 |
