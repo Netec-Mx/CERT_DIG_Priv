@@ -1,10 +1,116 @@
 # Crear, instalar y exportar un certificado desde Windows para uso local.
 
+## Ruta guiada esencial — 20 minutos
+
+### Escenario, objetivo y relación con la agenda
+
+Necesitas crear y respaldar de forma controlada un certificado local de Windows. Distinguirás `CurrentUser` de `LocalMachine`, crearás un certificado en el ámbito del usuario y exportarás su parte pública y un PFX protegido. Cubre 3.1 a 3.4 y la práctica aprobada del Capítulo 3.
+
+### Prerrequisitos y archivos
+
+- Windows 10/11, PowerShell 5.1 o 7 y módulo PKI.
+- `certmgr.msc`; MMC y `LocalMachine` requieren privilegios administrativos y se dejan como demostración del instructor.
+- Archivos: `exports/server.cer`, `exports/certificate.pfx` y `evidence/thumbprint.txt`.
+
+```mermaid
+flowchart LR
+    P[PowerShell sin elevar] --> U[CurrentUser / My]
+    M[MMC con elevación] --> L[LocalMachine / My]
+    U --> E[Exportación CER o PFX]
+    L --> S[Servicios del equipo]
+```
+
+`My` almacena certificados personales. `Root` y `CA` no son destinos para el certificado leaf de esta práctica.
+
+### Procedimiento esencial
+
+1. Prepara el entorno sin elevar privilegios:
+
+   ```powershell
+   $LabRoot = Join-Path $HOME "cert-digital-lab"
+   @("certs","private","csr","exports","signed","scripts","config","evidence") |
+     ForEach-Object { New-Item -ItemType Directory -Path (Join-Path $LabRoot $_) -Force | Out-Null }
+   Get-Module -ListAvailable PKI
+   ```
+
+2. Abre `certmgr.msc` y localiza `Personal`, `Trusted Root Certification Authorities` e `Intermediate Certification Authorities`. No importes todavía nada en Root o CA.
+
+3. Crea el certificado leaf en `CurrentUser\My`:
+
+   ```powershell
+   $cert = New-SelfSignedCertificate `
+     -Subject "CN=service.local, O=CERT_DIG Lab" `
+     -DnsName "service.local","api.service.local" `
+     -CertStoreLocation "Cert:\CurrentUser\My" `
+     -KeyAlgorithm RSA -KeyLength 2048 -HashAlgorithm SHA256 `
+     -KeyUsage DigitalSignature,KeyEncipherment `
+     -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.1") `
+     -NotAfter (Get-Date).AddDays(365)
+   $cert.Thumbprint | Set-Content (Join-Path $LabRoot "evidence\thumbprint.txt")
+   ```
+
+4. Verifica Subject, vigencia, SAN, EKU y llave asociada:
+
+   ```powershell
+   $cert | Format-List Subject,Thumbprint,NotBefore,NotAfter,HasPrivateKey
+   $cert.Extensions | Format-Table Oid,Format
+   ```
+
+5. Exporta el certificado público:
+
+   ```powershell
+   Export-Certificate -Cert $cert -FilePath (Join-Path $LabRoot "exports\server.cer") -Type CERT
+   ```
+
+6. Exporta el PFX solicitando `<PFX_PASSWORD>` sin mostrarla:
+
+   ```powershell
+   $PfxPassword = Read-Host "<PFX_PASSWORD>" -AsSecureString
+   Export-PfxCertificate -Cert $cert -FilePath (Join-Path $LabRoot "exports\certificate.pfx") -Password $PfxPassword
+   $PfxPassword = $null
+   ```
+
+### Resultado esperado y validación final
+
+- `CurrentUser\My` contiene el certificado y `HasPrivateKey` es `True`.
+- `server.cer` no contiene llave privada; `certificate.pfx` sí la transporta protegida.
+- Verificación observable:
+
+  ```powershell
+  $public = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new((Join-Path $LabRoot "exports\server.cer"))
+  $public.HasPrivateKey -eq $false
+  Test-Path (Join-Path $LabRoot "exports\certificate.pfx")
+  ```
+
+### Seguridad, troubleshooting y limpieza
+
+- No instales un leaf en `Root` o `CA`; esos stores corresponden a anclas e intermedias reales.
+- Restringe la ACL de `exports` al usuario actual y evita carpetas sincronizadas o compartidas para el PFX:
+
+  ```powershell
+  $ExportsPath = Join-Path $LabRoot "exports"
+  icacls $ExportsPath /inheritance:r /grant:r "$($env:USERNAME):(OI)(CI)(F)"
+  ```
+
+- Si `Export-PfxCertificate` falla, confirma `HasPrivateKey` y que la llave sea exportable en este laboratorio.
+- `LocalMachine` requiere elevación; no cambies políticas de ejecución si solo ejecutas comandos interactivos.
+- Al terminar el curso, elimina el certificado por thumbprint exacto y borra el PFX con `Remove-Item -LiteralPath (Join-Path $LabRoot "exports\certificate.pfx")`; conserva el CER si se requiere como evidencia.
+
+### Reflexión
+
+1. ¿Qué identidad usa `CurrentUser` y qué servicios necesitan `LocalMachine`?
+2. ¿Por qué un CER puede compartirse y un PFX debe protegerse?
+3. ¿Qué riesgo introduce marcar una llave como exportable?
+
+### Actividades opcionales — fuera de los 20 minutos
+
+Explorar MMC con ambos ámbitos, importar el PFX en un equipo aislado y convertir CER entre DER y PEM. El procedimiento ampliado queda como referencia opcional.
+
 ## Metadatos
 
 | Campo            | Detalle                                      |
 |------------------|----------------------------------------------|
-| **Duración**     | 20 minutos                                   |
+| **Duración**     | 45 minutos (ruta esencial)                   |
 | **Complejidad**  | Media                                        |
 | **Nivel Bloom**  | Crear (Create)                               |
 | **Plataforma**   | Windows 10/11 o Windows Server 2019/2022     |
@@ -47,7 +153,7 @@ Al completar este laboratorio serás capaz de:
 |--------------------------------------------------|-----------------------------------------------------------------------------------------|
 | Cuenta de administrador local                    | Necesaria para acceder a `LocalMachine` y ejecutar PowerShell elevado                  |
 | PowerShell 5.1 o superior                        | Incluido en Windows 10/11 y Windows Server 2019/2022                                   |
-| Directorio de trabajo disponible                 | `C:\Labs\Certs\` con permisos de escritura                                             |
+| Directorio de trabajo disponible                 | `<LAB_ROOT>` (`$HOME\cert-digital-lab`) con permisos de escritura                         |
 | Sin restricciones de `ExecutionPolicy` bloqueantes | Se ajustará al inicio si es necesario                                                 |
 
 ---
@@ -78,11 +184,13 @@ Get-Module -ListAvailable -Name PKI
 # 3. Ajustar política de ejecución si es necesario (solo para esta sesión)
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned -Force
 
-# 4. Crear directorio de trabajo
-New-Item -ItemType Directory -Path "C:\Labs\Certs" -Force
+# 4. Crear la estructura canónica sin requerir una ruta fija en C:\
+$LabRoot = Join-Path $HOME "cert-digital-lab"
+@("certs", "private", "csr", "exports", "signed", "scripts", "config", "evidence") |
+    ForEach-Object { New-Item -ItemType Directory -Path (Join-Path $LabRoot $_) -Force | Out-Null }
 
 # 5. Confirmar directorio creado
-Write-Host "Directorio de trabajo: C:\Labs\Certs" -ForegroundColor Green
+Write-Host "Directorio de trabajo: $LabRoot" -ForegroundColor Green
 ```
 
 **Salida esperada de preparación:**
@@ -96,14 +204,16 @@ ModuleType Version    Name
 ---------- -------    ----
 Manifest   1.0.0.0    PKI
 
-Directorio de trabajo: C:\Labs\Certs
+Directorio de trabajo: <HOME>\cert-digital-lab
 ```
 
 > **Nota de seguridad:** Durante todo el laboratorio, los archivos `.key` y `.pfx` contienen material criptográfico sensible. No los compartas, no los subas a repositorios públicos y elimínalos de forma segura al finalizar la sección de limpieza.
 
 ---
 
-## Pasos del Laboratorio
+## Anexo opcional: procedimiento ampliado
+
+> **Referencia no ejecutable sin revisión del instructor:** no importes un certificado leaf en `LocalMachine\Root` o `LocalMachine\CA`, no cambies `ExecutionPolicy` para ejecutar comandos interactivos y no eleves privilegios salvo una demostración controlada de MMC/LocalMachine.
 
 ---
 
@@ -249,7 +359,7 @@ $thumbprint = $cert.Thumbprint
 Write-Host "Thumbprint guardado: $thumbprint" -ForegroundColor Yellow
 
 # Guardar también en archivo de texto para referencia
-$thumbprint | Out-File -FilePath "C:\Labs\Certs\thumbprint.txt" -Encoding UTF8
+$thumbprint | Out-File -FilePath (Join-Path $LabRoot "evidence\thumbprint.txt") -Encoding UTF8
 ```
 
 **2.3 — Verificar el certificado en certmgr.msc**
@@ -393,10 +503,10 @@ $certToExport = Get-ChildItem Cert:\CurrentUser\My |
 
 Export-Certificate `
     -Cert $certToExport `
-    -FilePath "C:\Labs\Certs\lab-local-public.cer" `
+    -FilePath (Join-Path $LabRoot "exports\server.cer") `
     -Type CERT
 
-Write-Host "✔ Exportado como .cer (DER): C:\Labs\Certs\lab-local-public.cer" -ForegroundColor Green
+Write-Host "✔ Exportado como .cer (DER): $LabRoot\exports\server.cer" -ForegroundColor Green
 ```
 
 **4.2 — Exportar también como `.cer` en formato Base64 (PEM-compatible)**
@@ -405,16 +515,16 @@ Write-Host "✔ Exportado como .cer (DER): C:\Labs\Certs\lab-local-public.cer" -
 # Exportar en formato Base64 (útil para compatibilidad con herramientas Linux/OpenSSL)
 Export-Certificate `
     -Cert $certToExport `
-    -FilePath "C:\Labs\Certs\lab-local-public-b64.cer" `
+    -FilePath (Join-Path $LabRoot "exports\server-b64.cer") `
     -Type CERT
 
 # Convertir a Base64 manualmente para formato PEM
-$certBytes = [System.IO.File]::ReadAllBytes("C:\Labs\Certs\lab-local-public.cer")
+$certBytes = [System.IO.File]::ReadAllBytes((Join-Path $LabRoot "exports\server.cer"))
 $certBase64 = [System.Convert]::ToBase64String($certBytes, 'InsertLineBreaks')
 $pemContent = "-----BEGIN CERTIFICATE-----`n$certBase64`n-----END CERTIFICATE-----"
-$pemContent | Out-File -FilePath "C:\Labs\Certs\lab-local-public.pem" -Encoding ASCII
+$pemContent | Out-File -FilePath (Join-Path $LabRoot "exports\server.pem") -Encoding ASCII
 
-Write-Host "✔ Exportado como .pem (Base64): C:\Labs\Certs\lab-local-public.pem" -ForegroundColor Green
+Write-Host "✔ Exportado como .pem (Base64): $LabRoot\exports\server.pem" -ForegroundColor Green
 ```
 
 **4.3 — Exportar como `.pfx` (con clave privada, protegido por contraseña)**
@@ -429,11 +539,11 @@ $pfxPassword = Read-Host -Prompt "Ingresa contraseña para el PFX (mínimo 12 ca
 # Exportar como PFX (PKCS#12) incluyendo clave privada
 Export-PfxCertificate `
     -Cert $certToExport `
-    -FilePath "C:\Labs\Certs\lab-local-full.pfx" `
+    -FilePath (Join-Path $LabRoot "exports\certificate.pfx") `
     -Password $pfxPassword `
     -ChainOption BuildChain
 
-Write-Host "✔ Exportado como .pfx (con clave privada): C:\Labs\Certs\lab-local-full.pfx" -ForegroundColor Green
+Write-Host "✔ Exportado como .pfx (con clave privada): $LabRoot\exports\certificate.pfx" -ForegroundColor Green
 Write-Host "  ⚠ Guarda la contraseña en un lugar seguro. Sin ella, el PFX no es recuperable." -ForegroundColor Yellow
 ```
 
@@ -441,7 +551,7 @@ Write-Host "  ⚠ Guarda la contraseña en un lugar seguro. Sin ella, el PFX no 
 
 ```powershell
 # Listar archivos generados con tamaños
-Get-ChildItem "C:\Labs\Certs\" | Format-Table Name, Length, LastWriteTime -AutoSize
+Get-ChildItem (Join-Path $LabRoot "exports") | Format-Table Name, Length, LastWriteTime -AutoSize
 
 # Comparar tamaños: el .pfx debe ser considerablemente más grande que el .cer
 # ya que incluye la clave privada y la cadena de certificados
@@ -452,7 +562,7 @@ Get-ChildItem "C:\Labs\Certs\" | Format-Table Name, Length, LastWriteTime -AutoS
 ```powershell
 # Leer y mostrar información del .cer exportado para confirmar que NO tiene clave privada
 $certFromFile = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2(
-    "C:\Labs\Certs\lab-local-public.cer"
+    (Join-Path $LabRoot "exports\server.cer")
 )
 
 Write-Host "`n=== Información del .cer exportado ===" -ForegroundColor Cyan
@@ -491,15 +601,15 @@ NotAfter      : 01/06/2026 10:00:00
 
 ```powershell
 # Confirmar existencia de ambos archivos
-$cerExists = Test-Path "C:\Labs\Certs\lab-local-public.cer"
-$pfxExists = Test-Path "C:\Labs\Certs\lab-local-full.pfx"
+$cerExists = Test-Path (Join-Path $LabRoot "exports\server.cer")
+$pfxExists = Test-Path (Join-Path $LabRoot "exports\certificate.pfx")
 
 Write-Host "Archivo .cer existe: $(if($cerExists){'✔ Sí'}else{'✘ No'})"
 Write-Host "Archivo .pfx existe: $(if($pfxExists){'✔ Sí'}else{'✘ No'})"
 
 # Confirmar que el .cer no tiene clave privada
 $testCer = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2(
-    "C:\Labs\Certs\lab-local-public.cer"
+    (Join-Path $LabRoot "exports\server.cer")
 )
 Write-Host ".cer HasPrivateKey  : $(if(-not $testCer.HasPrivateKey){'✔ False (correcto)'}else{'✘ True (revisar)'})"
 ```
@@ -518,7 +628,7 @@ Write-Host ".cer HasPrivateKey  : $(if(-not $testCer.HasPrivateKey){'✔ False (
 # Importar el .cer en la tienda de CAs intermedias del equipo local
 # Escenario: recibes el certificado público de una CA intermedia para completar la cadena
 Import-Certificate `
-    -FilePath "C:\Labs\Certs\lab-local-public.cer" `
+    -FilePath (Join-Path $LabRoot "exports\server.cer") `
     -CertStoreLocation Cert:\LocalMachine\CA
 
 Write-Host "✔ Certificado .cer importado en LocalMachine\CA" -ForegroundColor Green
@@ -534,7 +644,7 @@ $importPassword = Read-Host -Prompt "Contraseña del PFX para importar" -AsSecur
 # Importar PFX en LocalMachine\My
 # -Exportable:$false es una buena práctica en producción para proteger la clave privada
 $importedCert = Import-PfxCertificate `
-    -FilePath "C:\Labs\Certs\lab-local-full.pfx" `
+    -FilePath (Join-Path $LabRoot "exports\certificate.pfx") `
     -Password $importPassword `
     -CertStoreLocation Cert:\LocalMachine\My `
     -Exportable $false
@@ -553,7 +663,7 @@ Write-Host "  La clave privada NO puede re-exportarse desde esta instalación." 
 
 ```powershell
 # Comparar el Thumbprint del certificado importado con el original
-$originalThumbprint = Get-Content "C:\Labs\Certs\thumbprint.txt"
+$originalThumbprint = Get-Content (Join-Path $LabRoot "evidence\thumbprint.txt")
 $importedThumbprint = $importedCert.Thumbprint
 
 Write-Host "`n=== Verificación de integridad ===" -ForegroundColor Cyan
@@ -620,7 +730,7 @@ Write-Host "`n╔═════════════════════
 Write-Host "║       VALIDACIÓN FINAL - LAB 03-00-01               ║" -ForegroundColor Cyan
 Write-Host "╚══════════════════════════════════════════════════════╝`n" -ForegroundColor Cyan
 
-$thumbprint = Get-Content "C:\Labs\Certs\thumbprint.txt" -ErrorAction SilentlyContinue
+$thumbprint = Get-Content (Join-Path $LabRoot "evidence\thumbprint.txt") -ErrorAction SilentlyContinue
 
 $results = @(
     @{
@@ -637,15 +747,15 @@ $results = @(
     },
     @{
         Test = "4. Archivo .cer exportado existe"
-        Pass = Test-Path "C:\Labs\Certs\lab-local-public.cer"
+        Pass = Test-Path (Join-Path $LabRoot "exports\server.cer")
     },
     @{
         Test = "5. Archivo .pfx exportado existe"
-        Pass = Test-Path "C:\Labs\Certs\lab-local-full.pfx"
+        Pass = Test-Path (Join-Path $LabRoot "exports\certificate.pfx")
     },
     @{
         Test = "6. Archivo .pem exportado existe"
-        Pass = Test-Path "C:\Labs\Certs\lab-local-public.pem"
+        Pass = Test-Path (Join-Path $LabRoot "exports\server.pem")
     },
     @{
         Test = "7. .cer NO contiene clave privada"

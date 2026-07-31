@@ -1,10 +1,115 @@
 # Firmar un archivo y validar su integridad; después habilitar HTTPS en un servicio de prueba.
 
+## Ruta guiada esencial — 20 minutos
+
+### Escenario, objetivo y relación con la agenda
+
+Debes demostrar que un archivo no fue alterado y habilitar HTTPS en un servicio local. Firmarás y verificarás un documento, comprobarás el fallo tras modificarlo y validarás un servidor HTTPS. Cubre 4.1 a 4.5 y la práctica aprobada del Capítulo 4.
+
+### Prerrequisitos y archivos
+
+- Capítulo 2 completado: `private/server.key` y `certs/server.crt`.
+- OpenSSL, Python 3 y curl.
+- Archivos nuevos: `signed/document.txt`, `signed/document.sig`, `signed/public-key.pem`, `scripts/https_server.py` y evidencia de validación.
+
+```mermaid
+flowchart LR
+    D[Documento] --> H[Hash SHA-256]
+    H --> S[Firma con llave privada]
+    S --> V[Verificación con llave pública]
+```
+
+#### Mapa visual: TLS
+
+```mermaid
+flowchart LR
+    C[Cliente] -->|valida identidad y negocia TLS| S[Servidor]
+    SC[Certificado de servidor] --> S
+    S -->|canal cifrado| C
+```
+
+#### Mapa visual: mTLS
+
+```mermaid
+flowchart LR
+    CC[Certificado de cliente] --> C[Cliente]
+    C <-->|autenticación mutua TLS| S[Servidor]
+    SC[Certificado de servidor] --> S
+    S --> A[Autorización separada]
+```
+
+Ninguna llave privada viaja por la red. mTLS autentica certificados; la autorización sigue siendo una decisión independiente.
+
+### Parte A — firma y verificación (10 minutos)
+
+1. Prepara rutas y documento:
+
+   ```bash
+   export LAB_ROOT="${LAB_ROOT:-$HOME/cert-digital-lab}"
+   export PRIVATE_KEY_PATH="$LAB_ROOT/private/server.key"
+   export CERTIFICATE_PATH="$LAB_ROOT/certs/server.crt"
+   mkdir -p "$LAB_ROOT"/{signed,scripts,evidence}
+   printf 'Documento de prueba CERT_DIG\nVersión: 1\n' > "$LAB_ROOT/signed/document.txt"
+   ```
+
+2. Extrae la llave pública, firma y verifica:
+
+   ```bash
+   openssl x509 -in "$CERTIFICATE_PATH" -pubkey -noout > "$LAB_ROOT/signed/public-key.pem"
+   openssl dgst -sha256 -sign "$PRIVATE_KEY_PATH" -out "$LAB_ROOT/signed/document.sig" "$LAB_ROOT/signed/document.txt"
+   openssl dgst -sha256 -verify "$LAB_ROOT/signed/public-key.pem" -signature "$LAB_ROOT/signed/document.sig" "$LAB_ROOT/signed/document.txt"
+   ```
+
+3. Copia el documento, modifícalo y confirma `Verification failure`. No sobrescribas la evidencia original.
+
+La firma demuestra integridad y posesión de la llave. El no repudio exige además identidad validada, custodia y contexto jurídico; no surge automáticamente de un certificado autofirmado.
+
+### Parte B — HTTPS local (10 minutos)
+
+1. Usa el servidor Python incluido en el procedimiento ampliado o el script preparado por el instructor, configurado con `<CERTIFICATE_PATH>`, `<PRIVATE_KEY_PATH>` y TLS 1.2 como mínimo.
+
+2. Inicia el servicio en `<SERVICE_PORT>` y conserva su PID. Valida con confianza explícita:
+
+   ```bash
+   export SERVICE_PORT="8443"
+   python3 "$LAB_ROOT/scripts/https_server.py" &
+   HTTPS_PID=$!
+   curl --cacert "$CERTIFICATE_PATH" --resolve service.local:${SERVICE_PORT}:127.0.0.1 "https://service.local:${SERVICE_PORT}/"
+   openssl s_client -connect "127.0.0.1:${SERVICE_PORT}" -servername service.local -CAfile "$CERTIFICATE_PATH" </dev/null
+   ```
+
+3. Registra protocolo, suite criptográfica, Subject, SAN y `Verify return code`.
+
+### Resultado esperado y validación final
+
+- El documento original produce `Verified OK`; el manipulado, `Verification failure`.
+- HTTPS responde y `s_client` muestra `Verify return code: 0 (ok)` usando confianza explícita.
+- Evidencia observable: firma binaria, documento original y registro `evidence/chapter04-validation.txt`.
+
+### Seguridad, troubleshooting y limpieza
+
+- No copies ni muestres la llave privada; mTLS tampoco reemplaza autorización.
+- No coloques `private/server.key` dentro de la imagen de un contenedor. En un despliegue real, usa un montaje protegido o integración con un gestor de secretos/KMS/HSM según la plataforma.
+- Una variable de entorno sirve para referenciar una ruta, no para almacenar el contenido de una llave privada.
+- No uses `--insecure` como solución. Para un error de confianza usa `--cacert` con el certificado esperado.
+- Si certificado y llave no corresponden, compara sus claves públicas con SHA-256 y detén el servidor.
+- Finaliza solo `$HTTPS_PID`. No instales el leaf en el trust store global y no uses `pkill -f`.
+
+### Reflexión
+
+1. ¿Por qué se firma el hash y se verifica con la llave pública?
+2. ¿Qué valida TLS además del cifrado del canal?
+3. ¿Qué certificado adicional necesita mTLS y qué no resuelve por sí mismo?
+
+### Actividades opcionales — fuera de los 20 minutos
+
+RSA-PSS, configuración nginx, demostración mTLS con certificado cliente y análisis detallado del handshake. Se mantienen como anexos y no forman parte del tiempo principal.
+
 ## Metadatos
 
 | Campo        | Detalle                        |
 |--------------|--------------------------------|
-| Duración     | 20 minutos                     |
+| Duración     | 50 minutos (ruta esencial)     |
 | Complejidad  | Media                          |
 | Nivel Bloom  | Aplicar (Apply)                |
 | Práctica     | 4 de 5                         |
@@ -36,7 +141,7 @@ Al completar esta práctica serás capaz de:
 
 | Requisito | Detalle |
 |-----------|---------|
-| Práctica 2 completada | Debes contar con los archivos: `server.key`, `server.crt` y `server.csr` en `~/labs/certs/` |
+| Práctica 2 completada | Debes contar con `private/server.key`, `certs/server.crt` y `csr/server.csr` bajo `<LAB_ROOT>` |
 | Conceptos de firma digital | Diferencia entre firma y cifrado (lección 4.1) |
 | Uso básico de terminal Linux | Navegación de directorios, edición de archivos, permisos |
 | HTTP/HTTPS básico | Saber qué es un handshake TLS y para qué sirve un certificado |
@@ -59,10 +164,10 @@ Al completar esta práctica serás capaz de:
 ### Estructura de directorios esperada (herencia de Práctica 2)
 
 ```
-~/labs/certs/
-├── server.key        ← llave privada RSA (chmod 600)
-├── server.crt        ← certificado autofirmado X.509
-└── server.csr        ← solicitud de firma (referencia)
+cert-digital-lab/
+├── private/server.key  ← llave privada RSA (chmod 600)
+├── certs/server.crt    ← certificado autofirmado X.509
+└── csr/server.csr      ← solicitud de firma (referencia)
 ```
 
 ### Verificación del entorno antes de comenzar
@@ -71,13 +176,14 @@ Ejecuta los siguientes comandos para confirmar que tienes todo lo necesario:
 
 ```bash
 # 1. Verificar que el directorio de trabajo existe
-ls -la ~/labs/certs/
+export LAB_ROOT="${LAB_ROOT:-$HOME/cert-digital-lab}"
+ls -la "$LAB_ROOT/private/server.key" "$LAB_ROOT/certs/server.crt" "$LAB_ROOT/csr/server.csr"
 
 # 2. Verificar permisos de la llave privada (debe ser -rw-------)
-stat -c "%a %n" ~/labs/certs/server.key
+stat -c "%a %n" "$LAB_ROOT/private/server.key"
 
 # 3. Verificar que el certificado es válido y mostrar su resumen
-openssl x509 -in ~/labs/certs/server.crt -noout -subject -issuer -dates
+openssl x509 -in "$LAB_ROOT/certs/server.crt" -noout -subject -issuer -dates
 
 # 4. Verificar versiones de herramientas
 openssl version && python3 --version && curl --version | head -1
@@ -87,7 +193,7 @@ openssl version && python3 --version && curl --version | head -1
 
 ```
 # Ejemplo de salida de stat:
-600 /home/usuario/labs/certs/server.key
+600 <LAB_ROOT>/private/server.key
 
 # Ejemplo de salida de openssl x509:
 subject=CN=localhost, O=LabTest, C=MX
@@ -100,15 +206,15 @@ notAfter=Jan  1 00:00:00 2025 GMT
 
 ```bash
 # Crear subdirectorio para los artefactos de la Práctica 4
-mkdir -p ~/labs/certs/practica4
-cd ~/labs/certs/practica4
+mkdir -p "$LAB_ROOT"/{signed,scripts,evidence}
+cd "$LAB_ROOT/signed"
 
-# Crear un enlace simbólico a los archivos de la Práctica 2
-ln -s ../server.key server.key
-ln -s ../server.crt server.crt
+# Referenciar los artefactos canónicos sin duplicar la llave privada
+SERVER_KEY="$LAB_ROOT/private/server.key"
+SERVER_CERT="$LAB_ROOT/certs/server.crt"
 
 # Extraer la llave pública del certificado (necesaria para verificar firmas)
-openssl x509 -in server.crt -pubkey -noout > pubkey.pem
+openssl x509 -in "$SERVER_CERT" -pubkey -noout > pubkey.pem
 
 # Verificar que la llave pública se extrajo correctamente
 head -3 pubkey.pem
@@ -123,7 +229,9 @@ MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA...
 
 ---
 
-## Pasos del Laboratorio
+## Anexo opcional: procedimiento ampliado
+
+> **Referencia no ejecutable sin revisión del instructor:** no uses `--insecure`, no instales el leaf en el trust store global y sustituye comparaciones MD5 por SHA-256 de claves públicas. Las operaciones con `sudo` quedan excluidas de la práctica del alumno.
 
 ---
 
@@ -140,7 +248,7 @@ MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA...
 1. Navega al directorio de trabajo de la práctica:
 
 ```bash
-cd ~/labs/certs/practica4
+cd "$LAB_ROOT/signed"
 ```
 
 2. Crea el archivo de documento simulado:
@@ -200,7 +308,7 @@ test -s contrato_servicio.txt && echo "✓ Archivo creado correctamente" || echo
 
 ```bash
 openssl dgst -sha256 \
-  -sign server.key \
+  -sign "$SERVER_KEY" \
   -out contrato_servicio.sig \
   contrato_servicio.txt
 ```
@@ -371,7 +479,7 @@ FINAL=$(openssl dgst -sha256 -verify pubkey.pem -signature contrato_servicio.sig
 
 ```bash
 openssl dgst -sha256 \
-  -sign server.key \
+  -sign "$SERVER_KEY" \
   -sigopt rsa_padding_mode:pss \
   -sigopt rsa_pss_saltlen:-1 \
   -out contrato_pss.sig \
@@ -412,8 +520,8 @@ Verified OK
 1. Crea el directorio raíz del servidor y un archivo HTML de prueba:
 
 ```bash
-mkdir -p ~/labs/certs/practica4/www
-cat > ~/labs/certs/practica4/www/index.html << 'EOF'
+mkdir -p "$LAB_ROOT/scripts/www"
+cat > "$LAB_ROOT/scripts/www/index.html" << 'EOF'
 <!DOCTYPE html>
 <html>
 <head><title>Lab HTTPS - Práctica 4</title></head>
@@ -429,7 +537,7 @@ EOF
 2. Crea el script del servidor HTTPS en Python:
 
 ```bash
-cat > ~/labs/certs/practica4/https_server.py << 'EOF'
+cat > "$LAB_ROOT/scripts/https_server.py" << 'EOF'
 #!/usr/bin/env python3
 """
 Servidor HTTPS mínimo para laboratorio de certificados.
@@ -442,9 +550,10 @@ from http.server import HTTPServer, SimpleHTTPRequestHandler
 # Configuración
 HOST = "localhost"
 PORT = 8443
-CERT_FILE = os.path.expanduser("~/labs/certs/practica4/server.crt")
-KEY_FILE  = os.path.expanduser("~/labs/certs/practica4/server.key")
-WWW_DIR   = os.path.expanduser("~/labs/certs/practica4/www")
+LAB_ROOT = os.path.expanduser("~/cert-digital-lab")
+CERT_FILE = os.path.join(LAB_ROOT, "certs", "server.crt")
+KEY_FILE  = os.path.join(LAB_ROOT, "private", "server.key")
+WWW_DIR   = os.path.join(LAB_ROOT, "scripts", "www")
 
 def main():
     # Cambiar al directorio raíz del servidor
@@ -483,13 +592,13 @@ EOF
 3. Verifica que los archivos de certificado son accesibles desde el script:
 
 ```bash
-ls -la ~/labs/certs/practica4/server.crt ~/labs/certs/practica4/server.key
+ls -la "$SERVER_CERT" "$SERVER_KEY"
 ```
 
 4. Inicia el servidor HTTPS en segundo plano:
 
 ```bash
-cd ~/labs/certs/practica4
+cd "$LAB_ROOT/scripts"
 python3 https_server.py &
 HTTPS_PID=$!
 echo "Servidor HTTPS iniciado con PID: $HTTPS_PID"
@@ -549,13 +658,13 @@ curl --insecure https://localhost:8443/
 5. **Intento 3: curl con `--cacert` (especifica el certificado autofirmado como CA de confianza):**
 
 ```bash
-curl --cacert server.crt https://localhost:8443/
+curl --cacert "$SERVER_CERT" https://localhost:8443/
 ```
 
 6. **Intento 4: curl con `-v` (verbose) para ver el handshake TLS completo:**
 
 ```bash
-curl -v --cacert server.crt https://localhost:8443/ 2>&1 | head -40
+curl -v --cacert "$SERVER_CERT" https://localhost:8443/ 2>&1 | head -40
 ```
 
 7. Identifica en la salida verbose:
@@ -597,7 +706,7 @@ More details here: https://curl.se/docs/sslcerts.html
 
 ```bash
 # La conexión con --cacert debe retornar HTTP 200
-HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --cacert server.crt https://localhost:8443/)
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --cacert "$SERVER_CERT" https://localhost:8443/)
 [ "$HTTP_CODE" = "200" ] && echo "✓ Servidor HTTPS responde HTTP 200 con certificado de confianza" || echo "✗ Error HTTP: $HTTP_CODE"
 ```
 
@@ -614,7 +723,7 @@ HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --cacert server.crt https://l
 ```bash
 echo "GET / HTTP/1.0" | openssl s_client \
   -connect localhost:8443 \
-  -CAfile server.crt \
+  -CAfile "$SERVER_CERT" \
   2>&1 | head -60
 ```
 
@@ -623,7 +732,7 @@ echo "GET / HTTP/1.0" | openssl s_client \
 ```bash
 echo "" | openssl s_client \
   -connect localhost:8443 \
-  -CAfile server.crt \
+  -CAfile "$SERVER_CERT" \
   -showcerts \
   2>&1 | grep -E "(subject|issuer|Verify|Protocol|Cipher|notBefore|notAfter)"
 ```
@@ -633,7 +742,7 @@ echo "" | openssl s_client \
 ```bash
 echo "" | openssl s_client \
   -connect localhost:8443 \
-  -CAfile server.crt \
+  -CAfile "$SERVER_CERT" \
   2>&1 | grep -E "(Protocol|Cipher Suite|TLS)"
 ```
 
@@ -647,13 +756,13 @@ Cipher    : TLS_AES_256_GCM_SHA384
 Verify return code: 0 (ok)
 ```
 
-> **💡 Interpretación:** `Verify return code: 0 (ok)` confirma que la cadena de confianza fue validada correctamente usando nuestro certificado autofirmado como CA raíz (`-CAfile server.crt`). Si usáramos el store del sistema sin añadir nuestro certificado, veríamos `Verify return code: 18 (self-signed certificate)`.
+> **💡 Interpretación:** `Verify return code: 0 (ok)` confirma una confianza explícita y limitada a este comando mediante `-CAfile "$SERVER_CERT"`. El certificado sigue siendo una entidad final autofirmada; no debe presentarse como una CA raíz de producción.
 
 **Verificación:**
 
 ```bash
 # Verificar que el return code sea 0 (OK) al usar --CAfile
-VERIFY_CODE=$(echo "" | openssl s_client -connect localhost:8443 -CAfile server.crt 2>&1 | grep "Verify return code" | awk '{print $4}')
+VERIFY_CODE=$(echo "" | openssl s_client -connect localhost:8443 -CAfile "$SERVER_CERT" 2>&1 | grep "Verify return code" | awk '{print $4}')
 [ "$VERIFY_CODE" = "0" ] && echo "✓ Verificación TLS exitosa (return code: 0)" || echo "⚠ Código de verificación: $VERIFY_CODE"
 ```
 
@@ -751,7 +860,7 @@ openssl x509 -in server.crt -noout -text | grep -A 5 "Key Usage"
 
 ```bash
 # Crear un archivo de referencia con la configuración nginx para mTLS
-cat > ~/labs/certs/practica4/nginx_mtls_reference.conf << 'EOF'
+cat > "$LAB_ROOT/config/nginx_mtls_reference.conf" << 'EOF'
 # ============================================================
 # REFERENCIA: Configuración nginx para mTLS (Mutual TLS)
 # NO ejecutar directamente - solo para estudio conceptual
@@ -762,8 +871,8 @@ server {
     server_name localhost;
 
     # --- Certificado del SERVIDOR (igual que TLS estándar) ---
-    ssl_certificate     /home/usuario/labs/certs/practica4/server.crt;
-    ssl_certificate_key /home/usuario/labs/certs/practica4/server.key;
+    ssl_certificate     <CERTIFICATE_PATH>;
+    ssl_certificate_key <PRIVATE_KEY_PATH>;
 
     # --- Versiones TLS permitidas ---
     ssl_protocols TLSv1.2 TLSv1.3;
@@ -804,7 +913,7 @@ server {
 }
 EOF
 
-cat ~/labs/certs/practica4/nginx_mtls_reference.conf
+cat "$LAB_ROOT/config/nginx_mtls_reference.conf"
 ```
 
 4. Analiza la diferencia entre TLS estándar y mTLS:
@@ -847,8 +956,8 @@ EOF
 
 ```bash
 # Verificar que el archivo de referencia fue creado
-test -f ~/labs/certs/practica4/nginx_mtls_reference.conf && \
-  echo "✓ Archivo de referencia mTLS creado en: ~/labs/certs/practica4/nginx_mtls_reference.conf" || \
+test -f "$LAB_ROOT/config/nginx_mtls_reference.conf" && \
+  echo "✓ Archivo de referencia mTLS creado en: $LAB_ROOT/config/nginx_mtls_reference.conf" || \
   echo "✗ Error al crear el archivo de referencia"
 ```
 
@@ -864,7 +973,7 @@ Ejecuta esta batería de validaciones para confirmar que completaste todos los o
 echo "========================================"
 echo "VALIDACIÓN COMPLETA - LAB 04-00-01"
 echo "========================================"
-cd ~/labs/certs/practica4
+cd "$LAB_ROOT/signed"
 
 PASS=0
 FAIL=0
@@ -911,12 +1020,12 @@ check "Servidor HTTPS Python activo (puerto 8443)" \
   "$(ss -tlnp 2>/dev/null | grep -q 8443 && echo true || echo false)"
 
 # B2: Respuesta HTTP 200 con --cacert
-HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --cacert server.crt https://localhost:8443/ 2>/dev/null)
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --cacert "$SERVER_CERT" https://localhost:8443/ 2>/dev/null)
 check "curl con --cacert retorna HTTP 200" \
   "$( [ "$HTTP_CODE" = "200" ] && echo true || echo false)"
 
 # B3: Verificación TLS s_client OK
-VERIFY_CODE=$(echo "" | openssl s_client -connect localhost:8443 -CAfile server.crt 2>&1 | grep "Verify return code" | awk '{print $4}')
+VERIFY_CODE=$(echo "" | openssl s_client -connect localhost:8443 -CAfile "$SERVER_CERT" 2>&1 | grep "Verify return code" | awk '{print $4}')
 check "openssl s_client: Verify return code 0 (ok)" \
   "$( [ "$VERIFY_CODE" = "0" ] && echo true || echo false)"
 
@@ -950,14 +1059,11 @@ FileNotFoundError: [Errno 2] No such file or directory: '/home/usuario/labs/cert
 
 ```bash
 # 1. Verificar que los archivos existen y son accesibles
-ls -la ~/labs/certs/practica4/server.key ~/labs/certs/practica4/server.crt
+ls -la "$SERVER_KEY" "$SERVER_CERT"
 
 # 2. Si los enlaces simbólicos están rotos, copiar los archivos directamente
-cd ~/labs/certs/practica4
-rm -f server.key server.crt
-cp ~/labs/certs/server.key ./server.key
-cp ~/labs/certs/server.crt ./server.crt
-chmod 600 server.key
+cd "$LAB_ROOT/signed"
+chmod 600 "$SERVER_KEY"
 
 # 3. Verificar que la llave y el certificado corresponden (el módulo público debe coincidir)
 openssl x509 -noout -modulus -in server.crt | md5sum
@@ -1030,12 +1136,12 @@ sudo update-ca-certificates --fresh 2>/dev/null | tail -2
 # 4. Listar artefactos generados (NO eliminar - se usan en Práctica 5)
 echo ""
 echo "[*] Artefactos generados en esta práctica (conservar para Práctica 5):"
-ls -la ~/labs/certs/practica4/
+ls -la "$LAB_ROOT/signed/"
 
 # 5. Verificar permisos de seguridad en llaves privadas
 echo ""
 echo "[*] Verificando permisos de llaves privadas:"
-find ~/labs/certs/ -name "*.key" -exec stat -c "%a %n" {} \; | while read perm file; do
+find "$LAB_ROOT/private" -name "*.key" -exec stat -c "%a %n" {} \; | while read perm file; do
     [ "$perm" = "600" ] && echo "✓ $perm $file" || echo "⚠ INSEGURO: $perm $file — ejecuta: chmod 600 $file"
 done
 ```

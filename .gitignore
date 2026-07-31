@@ -1,0 +1,34 @@
+# Material criptográfico privado o exportable
+*.key
+*.pfx
+*.p12
+*.pkcs12
+*.jks
+*.keystore
+
+# Secretos y configuración local
+.env
+.env.*
+!.env.example
+*.secret
+*.secrets
+secrets/
+
+# Artefactos generados por los laboratorios
+private/
+exports/
+cert-digital-lab/
+*.srl
+index.txt*
+serial*
+crlnumber*
+
+# Evidencias que pueden contener datos del entorno
+evidence/*.log
+evidence/*-output.txt
+
+# Archivos temporales del sistema/editor
+.DS_Store
+Thumbs.db
+*.tmp
+*.bak
