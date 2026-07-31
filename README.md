@@ -1,4 +1,10 @@
+<img src="images/neteclogo (2).png" alt="logo" width="300"/>
+
 # Certificados Digitales: Uso, Gestión y Firma
+
+## Plataforma de laboratorios
+
+Te damos la bienvenida a la **plataforma de laboratorios** del curso **Certificados Digitales: Uso, Gestión y Firma**. Aquí podrás explorar diferentes tecnologías a través de prácticas guiadas. ¡Desarrolla tus habilidades y lleva tus conocimientos al siguiente nivel!
 
 Este curso ofrece una visión integral sobre el uso, administración y firma de certificados digitales en entornos Windows, Linux y nube. A lo largo del curso, los participantes comprenderán el funcionamiento de la PKI, la gestión de llaves y certificados X.509, el uso de herramientas como OpenSSL y PowerShell, así como su integración en aplicaciones, APIs y servicios cloud.
 
@@ -59,6 +65,8 @@ Antes de eliminar, resuelve y comprueba que la ruta permanezca dentro de `<LAB_R
 
 ## Lista de laboratorios
 
+Cada uno de estos laboratorios está diseñado para ofrecerte una experiencia práctica. Haz clic en los enlaces para comenzar.
+
 ### Capítulo 1
 
 - [Analizar un certificado HTTPS real e identificar emisor, vigencia, algoritmos y cadena de confianza.](Capitulo01/README.md#analizar-un-certificado-https-real-e-identificar-emisor-vigencia-algoritmos-y-cadena-de-confianza)
@@ -89,4 +97,13 @@ Antes de eliminar, resuelve y comprueba que la ruta permanezca dentro de `<LAB_R
   - Descripción: Actividad práctica guiada basada estrictamente en el contenido del módulo.
   - Duración esencial: 30 min
 
+  
+## 📬 **Contacto y más información**
+
+
+Si tienes alguna pregunta o necesitas más detalles, no dudes en [contactarnos](mailto:soporte@netec.com). También puedes encontrar más recursos en nuestra [página](https://netec.com).
+
+---
+
+¡Gracias por visitar nuestra plataforma! No olvides revisar todos los laboratorios y comenzar tu viaje de aprendizaje hoy mismo.
 
